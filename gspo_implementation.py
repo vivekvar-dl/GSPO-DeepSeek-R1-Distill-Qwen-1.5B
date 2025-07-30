@@ -135,8 +135,9 @@ class GSPOTrainer:
         models_different_objects = id(self.model) != id(self.old_model)
         
         # Check if parameters are initially the same (they should be after copying)
-        current_param = next(self.model.parameters()).flatten()[:100]
-        old_param = next(self.old_model.parameters()).flatten()[:100] 
+        # Convert both to same dtype to avoid dtype mismatch
+        current_param = next(self.model.parameters()).flatten()[:100].float()
+        old_param = next(self.old_model.parameters()).flatten()[:100].float()
         params_initially_same = torch.allclose(current_param, old_param, atol=1e-6)
         
         print(f"✅ Old model updated:")
@@ -835,8 +836,8 @@ class GSPOTrainer:
             
             # Check if model parameters are actually different
             try:
-                current_param = next(self.model.parameters()).flatten()[:100]
-                old_param = next(self.old_model.parameters()).flatten()[:100]
+                current_param = next(self.model.parameters()).flatten()[:100].float()
+                old_param = next(self.old_model.parameters()).flatten()[:100].float()
                 params_different = not torch.allclose(current_param, old_param, atol=1e-6)
                 verification_results["params_different"] = params_different
                 print(f"✓ Model parameters different: {params_different}")
