@@ -110,7 +110,6 @@ class GSPOTrainer:
         self.step = 0
         logging.basicConfig(level=logging.INFO)  # Back to INFO level
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
     
     def update_old_model(self):
         """Update the old model (π_θ_old) for importance ratio computation"""

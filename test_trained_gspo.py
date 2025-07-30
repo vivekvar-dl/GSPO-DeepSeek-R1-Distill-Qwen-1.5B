@@ -58,30 +58,30 @@ def evaluate_model_on_tasks(model, tokenizer, num_samples=5):
     # Test prompts for different capabilities
     test_prompts = {
         "Math": [
-            "Problem: What is 15 × 23?\nSolution:",
-            "Problem: If a rectangle has length 12 and width 8, what is its area?\nSolution:",
-            "Problem: Solve for x: 3x + 7 = 22\nSolution:",
-            "Problem: What is the square root of 144?\nSolution:",
-            "Problem: Calculate 25% of 80.\nSolution:"
+            {"query": "Problem: What is 15 × 23?\nSolution:", "reference_answer": "345", "type": "math"},
+            {"query": "Problem: If a rectangle has length 12 and width 8, what is its area?\nSolution:", "reference_answer": "96", "type": "math"},
+            {"query": "Problem: Solve for x: 3x + 7 = 22\nSolution:", "reference_answer": "5", "type": "math"},
+            {"query": "Problem: What is the square root of 144?\nSolution:", "reference_answer": "12", "type": "math"},
+            {"query": "Problem: Calculate 25% of 80.\nSolution:", "reference_answer": "20", "type": "math"}
         ],
         "Reasoning": [
-            "Context: A person is holding an umbrella and walking quickly. The ground is wet.\n\nWhat can we conclude?",
-            "Context: All cats have fur. Fluffy is a cat.\n\nWhat can we conclude about Fluffy?",
-            "Context: If it's raining, then the ground gets wet. The ground is wet.\n\nWhat can we conclude?",
-            "Context: Sarah scored higher than John. John scored higher than Mike.\n\nWho scored the lowest?",
-            "Context: A library closes at 5 PM. It's currently 6 PM.\n\nIs the library open?"
+            {"query": "Context: A person is holding an umbrella and walking quickly. The ground is wet.\n\nWhat can we conclude?", "reference_answer": "It is raining", "type": "reasoning"},
+            {"query": "Context: All cats have fur. Fluffy is a cat.\n\nWhat can we conclude about Fluffy?", "reference_answer": "Fluffy has fur", "type": "reasoning"},
+            {"query": "Context: If it's raining, then the ground gets wet. The ground is wet.\n\nWhat can we conclude?", "reference_answer": "It might be raining", "type": "reasoning"},
+            {"query": "Context: Sarah scored higher than John. John scored higher than Mike.\n\nWho scored the lowest?", "reference_answer": "Mike", "type": "reasoning"},
+            {"query": "Context: A library closes at 5 PM. It's currently 6 PM.\n\nIs the library open?", "reference_answer": "No", "type": "reasoning"}
         ],
         "Code": [
-            "Write a Python function to find the maximum number in a list:",
-            "Write a function to check if a number is prime:",
-            "Write a Python function to reverse a string:",
-            "Write code to calculate the factorial of a number:",
-            "Write a function to find the sum of all even numbers in a list:"
+            {"query": "Write a Python function to find the maximum number in a list:", "reference_answer": "def max_num(lst): return max(lst)", "type": "code"},
+            {"query": "Write a function to check if a number is prime:", "reference_answer": "def is_prime(n): return n > 1 and all(n % i != 0 for i in range(2, int(n**0.5) + 1))", "type": "code"},
+            {"query": "Write a Python function to reverse a string:", "reference_answer": "def reverse_string(s): return s[::-1]", "type": "code"},
+            {"query": "Write code to calculate the factorial of a number:", "reference_answer": "def factorial(n): return 1 if n <= 1 else n * factorial(n-1)", "type": "code"},
+            {"query": "Write a function to find the sum of all even numbers in a list:", "reference_answer": "def sum_even(lst): return sum(x for x in lst if x % 2 == 0)", "type": "code"}
         ]
     }
     
-    # Create reward evaluator
-    reward_evaluator = create_reward_evaluator("mixed")
+    # Create reward evaluator (no arguments needed)
+    reward_evaluator = create_reward_evaluator()
     
     results = {}
     total_reward = 0
@@ -94,15 +94,15 @@ def evaluate_model_on_tasks(model, tokenizer, num_samples=5):
         
         task_rewards = []
         
-        for i, prompt in enumerate(prompts[:num_samples]):
+        for i, prompt_data in enumerate(prompts[:num_samples]):
             print(f"\n--- {task_type} Example {i+1} ---")
-            print(f"Prompt: {prompt}")
+            print(f"Prompt: {prompt_data['query']}")
             
-            response = generate_response(model, tokenizer, prompt)
+            response = generate_response(model, tokenizer, prompt_data['query'])
             print(f"Response: {response}")
             
-            # Calculate reward
-            reward = reward_evaluator(prompt, response)
+            # Calculate reward using the correct signature
+            reward = reward_evaluator(prompt_data['query'], response, prompt_data)
             task_rewards.append(reward)
             print(f"Reward: {reward:.3f}")
             
