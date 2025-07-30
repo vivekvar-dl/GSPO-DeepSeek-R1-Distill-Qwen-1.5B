@@ -187,7 +187,7 @@ class GSPOTrainer:
         response_start_idx: int,
         response_lengths: torch.Tensor
     ) -> torch.Tensor:
-        """Compute GSPO sequence-level importance ratio s_i(θ)"""
+        """Compute GSPO sequence-level importance ratio s_i(θ) with better numerical stability"""
         
         # Compute sequence log probabilities under current and old policies
         # Current model needs gradients for backprop
@@ -199,30 +199,44 @@ class GSPOTrainer:
             self.old_model, input_ids, attention_mask, response_start_idx, requires_grad=False
         )
         
+        # Add small epsilon to prevent division by zero in lengths
+        safe_lengths = torch.clamp(response_lengths.float(), min=1.0)
+        
         # Compute length-normalized importance ratio
         # s_i(θ) = (π_θ(y_i|x) / π_θ_old(y_i|x))^(1/|y_i|)
-        log_ratio = (current_log_prob - old_log_prob) / response_lengths.float()
+        log_ratio = (current_log_prob - old_log_prob) / safe_lengths
         
-        # Clamp log_ratio to prevent extreme values
-        log_ratio = torch.clamp(log_ratio, min=-10.0, max=10.0)
+        # More aggressive clamping to prevent extreme values
+        log_ratio = torch.clamp(log_ratio, min=-5.0, max=5.0)
         
         importance_ratio = torch.exp(log_ratio)
         
-        # Additional stability check
-        importance_ratio = torch.clamp(importance_ratio, min=1e-8, max=1e8)
+        # Additional stability check with tighter bounds
+        importance_ratio = torch.clamp(importance_ratio, min=0.1, max=10.0)
+        
+        # Final check for numerical issues
+        if torch.isnan(importance_ratio).any() or torch.isinf(importance_ratio).any():
+            self.logger.warning("NaN/Inf in importance ratio, using neutral ratios")
+            # Return neutral ratios (1.0) to avoid breaking training
+            return torch.ones_like(importance_ratio)
         
         return importance_ratio
     
     def compute_advantages(self, rewards: torch.Tensor) -> torch.Tensor:
-        """Compute group-based advantages as in GSPO"""
+        """Compute group-based advantages as in GSPO with better numerical stability"""
         batch_size = rewards.size(0)
         group_size = self.config.group_size
         
         # Handle case where batch size is smaller than group size
         if batch_size < group_size:
-            # Just normalize the rewards without grouping
+            # For small batches, use simple normalization with better stability
+            if batch_size == 1:
+                # Single element - return zero advantage (neutral)
+                return torch.zeros_like(rewards)
+            
             reward_mean = rewards.mean()
-            reward_std = rewards.std() + 1e-8
+            # Use unbiased std with better numerical stability
+            reward_std = torch.sqrt(rewards.var(unbiased=False) + 1e-8)
             advantages = (rewards - reward_mean) / reward_std
             return advantages
         
@@ -230,8 +244,11 @@ class GSPOTrainer:
         num_complete_groups = batch_size // group_size
         if num_complete_groups == 0:
             # Fallback to simple normalization
+            if batch_size == 1:
+                return torch.zeros_like(rewards)
+            
             reward_mean = rewards.mean()
-            reward_std = rewards.std() + 1e-8
+            reward_std = torch.sqrt(rewards.var(unbiased=False) + 1e-8)
             advantages = (rewards - reward_mean) / reward_std
             return advantages
         
@@ -242,9 +259,10 @@ class GSPOTrainer:
         # Reshape to group format
         grouped_rewards = rewards_subset.view(-1, group_size)
         
-        # Compute group statistics
+        # Compute group statistics with better numerical stability
         group_means = grouped_rewards.mean(dim=1, keepdim=True)
-        group_stds = grouped_rewards.std(dim=1, keepdim=True) + 1e-8
+        group_vars = grouped_rewards.var(dim=1, unbiased=False, keepdim=True)
+        group_stds = torch.sqrt(group_vars + 1e-8)
         
         # Compute advantages: (r - mean) / std
         advantages = (grouped_rewards - group_means) / group_stds
@@ -255,9 +273,16 @@ class GSPOTrainer:
         # If we had incomplete groups, handle remaining rewards
         if complete_batch_size < batch_size:
             remaining_rewards = rewards[complete_batch_size:]
-            remaining_mean = remaining_rewards.mean()
-            remaining_std = remaining_rewards.std() + 1e-8
-            remaining_advantages = (remaining_rewards - remaining_mean) / remaining_std
+            remaining_size = remaining_rewards.size(0)
+            
+            if remaining_size == 1:
+                # Single element - neutral advantage
+                remaining_advantages = torch.zeros_like(remaining_rewards)
+            else:
+                remaining_mean = remaining_rewards.mean()
+                remaining_var = remaining_rewards.var(unbiased=False)
+                remaining_std = torch.sqrt(remaining_var + 1e-8)
+                remaining_advantages = (remaining_rewards - remaining_mean) / remaining_std
             
             # Concatenate
             advantages = torch.cat([advantages, remaining_advantages])
@@ -386,17 +411,16 @@ class GSPOTrainer:
     ) -> Dict[str, float]:
         """Single GSPO training step with aggressive memory optimization"""
         
-        # Only process one query at a time for memory
-        if len(queries) > 1:
-            queries = queries[:1]
-        
-        # Generate responses with very conservative settings
+        # Generate multiple responses to get better batch statistics
         all_responses = []
         all_rewards = []
         all_input_data = []
         
-        for query in queries:
-            # Generate only 2 responses for memory
+        # Process multiple queries if available, or repeat single query
+        effective_queries = queries[:2] if len(queries) >= 2 else queries * 2
+        
+        for query in effective_queries:
+            # Generate responses
             group_size = min(self.config.group_size, 2)
             responses = self.generate_responses(
                 [query] * group_size,
@@ -433,17 +457,29 @@ class GSPOTrainer:
             all_responses.extend(responses)
             all_rewards.extend(query_rewards)
         
-        # Process in micro-batches if necessary
-        batch_size = len(all_input_data)
-        micro_batch_size = 1  # Process one sample at a time
+        # Ensure we have at least 2 samples for stable statistics
+        if len(all_rewards) < 2:
+            # Duplicate the data to avoid single-element issues
+            all_rewards = all_rewards * 2
+            all_input_data = all_input_data * 2
+            all_responses = all_responses * 2
         
-        total_loss = 0.0
-        total_stats = {}
+        # Process in micro-batches
+        batch_size = len(all_input_data)
+        micro_batch_size = 2  # Process 2 samples at a time for better stability
+        
+        accumulated_loss = 0.0
+        accumulated_stats = {}
+        valid_micro_batches = 0
         
         for i in range(0, batch_size, micro_batch_size):
             end_idx = min(i + micro_batch_size, batch_size)
             micro_batch = all_input_data[i:end_idx]
             micro_rewards = all_rewards[i:end_idx]
+            
+            # Skip if micro-batch is too small
+            if len(micro_batch) < 1:
+                continue
             
             # Convert to tensors
             rewards_tensor = torch.tensor(micro_rewards, device=self.device, dtype=torch.float)
@@ -491,7 +527,7 @@ class GSPOTrainer:
             
             # Skip step if loss is problematic
             if torch.isnan(loss) or torch.isinf(loss) or loss.item() == 0.0:
-                self.logger.warning("Skipping micro-batch due to problematic loss")
+                self.logger.warning(f"Skipping micro-batch {i//micro_batch_size} due to problematic loss")
                 continue
             
             # Scale loss for gradient accumulation
@@ -500,12 +536,27 @@ class GSPOTrainer:
             # Backward pass
             scaled_loss.backward()
             
-            total_loss += loss.item()
-            if not total_stats:
-                total_stats = stats
+            accumulated_loss += loss.item()
+            valid_micro_batches += 1
+            
+            if not accumulated_stats:
+                accumulated_stats = stats.copy()
+            else:
+                # Average the stats
+                for key in stats:
+                    accumulated_stats[key] = (accumulated_stats[key] + stats[key]) / 2
             
             # Clear cache
             torch.cuda.empty_cache()
+        
+        # Only proceed with optimizer step if we had valid micro-batches
+        if valid_micro_batches == 0:
+            self.logger.warning("No valid micro-batches processed, skipping optimizer step")
+            return {
+                "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
+                "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
+                "advantage_std": 0.0, "reward_mean": np.mean(all_rewards)
+            }
         
         # Update accumulation counter
         self.accumulation_steps += 1
@@ -522,15 +573,15 @@ class GSPOTrainer:
             self.step += 1
         
         # Log statistics
-        if self.step % self.config.log_frequency == 0:
-            self.logger.info(f"Step {self.step}: {total_stats}")
+        if self.step % self.config.log_frequency == 0 and self.step > 0:
+            self.logger.info(f"Step {self.step}: {accumulated_stats}")
             if WANDB_AVAILABLE and wandb.run is not None:
-                wandb.log(total_stats, step=self.step)
+                wandb.log(accumulated_stats, step=self.step)
         
         # Aggressive cache clearing
         torch.cuda.empty_cache()
         
-        return total_stats if total_stats else {
+        return accumulated_stats if accumulated_stats else {
             "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
             "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
             "advantage_std": 0.0, "reward_mean": np.mean(all_rewards)
