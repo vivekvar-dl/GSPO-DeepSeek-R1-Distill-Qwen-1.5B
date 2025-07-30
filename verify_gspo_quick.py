@@ -15,38 +15,38 @@ def quick_gspo_verification():
     print("🔍 GSPO Quick Verification Test")
     print("=" * 60)
     
-    # Load small model for quick testing
-    model_name = "microsoft/DialoGPT-small"  # Much smaller for quick test
-    print(f"Loading model: {model_name}")
+    # Use a very small model for CPU testing
+    model_name = "distilgpt2"  # Much smaller, faster on CPU
+    print(f"Loading {model_name} for quick verification...")
     
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float32,  # Use float32 for small model
-            device_map="auto" if torch.cuda.is_available() else "cpu"
+            torch_dtype=torch.float32,  # Use float32 for CPU
+            device_map=None  # Don't use device_map for small models
         )
         
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
+            
+        device = "cpu"  # Force CPU for compatibility
+        model = model.to(device)
         
-        print("✅ Model loaded successfully")
+        print(f"✓ Model loaded: {model.num_parameters() / 1e6:.1f}M parameters")
         
     except Exception as e:
-        print(f"❌ Failed to load model: {e}")
-        print("Trying fallback model...")
-        
-        # Fallback to an even smaller model
+        print(f"Error loading {model_name}: {e}")
+        # Ultimate fallback - use the smallest possible model
         model_name = "gpt2"
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float32,
-            device_map="auto" if torch.cuda.is_available() else "cpu"
-        )
+        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32)
         
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
+            
+        device = "cpu"
+        model = model.to(device)
     
     # Create GSPO configuration for quick test
     config = GSPOConfig(

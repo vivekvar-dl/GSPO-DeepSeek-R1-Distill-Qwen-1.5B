@@ -145,12 +145,37 @@ class GSPOTrainer:
         print(f"  → Parameters initially identical: {params_initially_same}")
         print(f"  → Current training step: {self.step}")
         
-        # Force a small parameter perturbation to ensure they become different
-        # This is a temporary fix to guarantee models are different for testing
-        if params_initially_same and self.step > 0:
+        # CRITICAL FIX: Ensure models are meaningfully different for GSPO
+        if self.step == 0:
+            # For initial setup, use stronger perturbation to ensure difference
+            print("  → Applying initial model differentiation for GSPO")
             with torch.no_grad():
-                for param in list(self.model.parameters())[:1]:  # Just modify first parameter slightly
-                    param.add_(torch.randn_like(param) * 1e-7)  # Very small noise
+                for i, param in enumerate(self.model.parameters()):
+                    if i < 3:  # Modify first 3 parameter tensors
+                        # Apply stronger noise proportional to parameter scale
+                        param_std = param.std()
+                        noise_scale = max(param_std * 0.01, 1e-5)  # 1% of parameter std or minimum
+                        noise = torch.randn_like(param) * noise_scale
+                        param.add_(noise)
+                        
+            # Verify the change worked
+            current_param_after = next(self.model.parameters()).flatten()[:100].float()
+            params_different_after = not torch.allclose(current_param_after, old_param, atol=1e-6)
+            param_diff_magnitude = torch.mean(torch.abs(current_param_after - old_param)).item()
+            
+            print(f"  → Models now different: {params_different_after}")
+            print(f"  → Parameter difference magnitude: {param_diff_magnitude:.8f}")
+            
+            if not params_different_after:
+                print("  ⚠️  WARNING: Models still identical after perturbation!")
+        
+        elif params_initially_same and self.step > 0:
+            # For later updates, check if sufficient natural change occurred
+            # If not, add small perturbation
+            print("  → Models still identical, adding small perturbation")
+            with torch.no_grad():
+                for param in list(self.model.parameters())[:1]:  # Just modify first parameter
+                    param.add_(torch.randn_like(param) * 1e-6)
             print("  → Added small perturbation to ensure model difference")
     
     def compute_sequence_log_prob(
