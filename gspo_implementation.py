@@ -108,8 +108,9 @@ class GSPOTrainer:
         
         # Logging
         self.step = 0
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.INFO)  # Back to INFO level
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
     
     def update_old_model(self):
         """Update the old model (π_θ_old) for importance ratio computation"""
@@ -138,41 +139,95 @@ class GSPOTrainer:
         response_start_idx: int,
         requires_grad: bool = False
     ) -> torch.Tensor:
-        """Compute log probability of sequence y given x"""
+        """Compute log probability of sequence y given x with robust error handling"""
         
         def _compute_log_prob():
-            # Use autocast for memory efficiency
-            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                logits = outputs.logits
-                
-                # Shift logits and labels for next-token prediction
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = input_ids[..., 1:].contiguous()
-                
-                # Only consider the response part (after prompt)
-                response_logits = shift_logits[:, response_start_idx:]
-                response_labels = shift_labels[:, response_start_idx:]
-                
-                # Compute log probabilities
-                log_probs = F.log_softmax(response_logits, dim=-1)
-                
-                # Gather log probabilities for actual tokens
-                token_log_probs = log_probs.gather(
-                    dim=-1, 
-                    index=response_labels.unsqueeze(-1)
-                ).squeeze(-1)
-                
-                # Apply attention mask to ignore padded tokens
-                response_mask = attention_mask[:, response_start_idx+1:response_start_idx+1+token_log_probs.shape[1]]
-                if response_mask.shape[1] != token_log_probs.shape[1]:
-                    # Adjust mask size if needed
+            try:
+                # Use autocast for memory efficiency
+                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                    logits = outputs.logits
+                    
+                    # Ensure we have valid dimensions
+                    if logits.size(1) <= 1:
+                        self.logger.warning("Sequence too short for log prob computation")
+                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                    
+                    # Shift logits and labels for next-token prediction
+                    shift_logits = logits[..., :-1, :].contiguous()
+                    shift_labels = input_ids[..., 1:].contiguous()
+                    
+                    # Ensure response_start_idx is valid
+                    max_response_start = shift_logits.size(1) - 1
+                    safe_response_start = min(response_start_idx, max_response_start)
+                    
+                    if safe_response_start >= shift_logits.size(1):
+                        self.logger.warning("Response start index out of bounds")
+                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                    
+                    # Only consider the response part (after prompt)
+                    response_logits = shift_logits[:, safe_response_start:]
+                    response_labels = shift_labels[:, safe_response_start:]
+                    
+                    if response_logits.size(1) == 0:
+                        self.logger.warning("Empty response for log prob computation")
+                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                    
+                    # Compute log probabilities with numerical stability
+                    log_probs = F.log_softmax(response_logits, dim=-1)
+                    
+                    # Check for NaN/Inf in log_probs
+                    if torch.isnan(log_probs).any() or torch.isinf(log_probs).any():
+                        self.logger.warning("NaN/Inf in log_probs")
+                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                    
+                    # Gather log probabilities for actual tokens
+                    token_log_probs = log_probs.gather(
+                        dim=-1, 
+                        index=response_labels.unsqueeze(-1)
+                    ).squeeze(-1)
+                    
+                    # Apply attention mask to ignore padded tokens
+                    response_mask_start = safe_response_start + 1
+                    response_mask_end = response_mask_start + token_log_probs.shape[1]
+                    
+                    if response_mask_end <= attention_mask.size(1):
+                        response_mask = attention_mask[:, response_mask_start:response_mask_end]
+                    else:
+                        # Truncate if mask is too short
+                        available_mask_len = attention_mask.size(1) - response_mask_start
+                        if available_mask_len <= 0:
+                            self.logger.warning("No valid response mask")
+                            return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                        
+                        response_mask = attention_mask[:, response_mask_start:response_mask_start + available_mask_len]
+                        token_log_probs = token_log_probs[:, :available_mask_len]
+                    
+                    # Ensure mask and token_log_probs have same length
                     min_len = min(response_mask.shape[1], token_log_probs.shape[1])
+                    if min_len <= 0:
+                        self.logger.warning("No valid tokens for log prob computation")
+                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                    
                     response_mask = response_mask[:, :min_len]
                     token_log_probs = token_log_probs[:, :min_len]
-                
-                sequence_log_prob = (token_log_probs * response_mask).sum(dim=-1)
-                return sequence_log_prob
+                    
+                    # Compute sequence log probability
+                    masked_log_probs = token_log_probs * response_mask
+                    sequence_log_prob = masked_log_probs.sum(dim=-1)
+                    
+                    # Final stability check
+                    sequence_log_prob = torch.clamp(sequence_log_prob, min=-50.0, max=10.0)
+                    
+                    if torch.isnan(sequence_log_prob).any() or torch.isinf(sequence_log_prob).any():
+                        self.logger.warning("NaN/Inf in final sequence log prob")
+                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                    
+                    return sequence_log_prob
+                    
+            except Exception as e:
+                self.logger.warning(f"Error in log prob computation: {e}")
+                return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
         
         if requires_grad:
             return _compute_log_prob()
@@ -297,12 +352,24 @@ class GSPOTrainer:
         response_start_idx: int,
         response_lengths: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """Compute GSPO loss"""
+        """Compute GSPO loss with debug logging"""
+        
+        self.logger.debug(f"GSPO Loss Debug - Input shapes: input_ids={input_ids.shape}, attention_mask={attention_mask.shape}, rewards={rewards.shape}, response_lengths={response_lengths.shape}")
+        self.logger.debug(f"Response start idx: {response_start_idx}")
         
         # Compute importance ratios
-        importance_ratios = self.compute_importance_ratio(
-            input_ids, attention_mask, response_start_idx, response_lengths
-        )
+        try:
+            importance_ratios = self.compute_importance_ratio(
+                input_ids, attention_mask, response_start_idx, response_lengths
+            )
+            self.logger.debug(f"Importance ratios computed: {importance_ratios}")
+        except Exception as e:
+            self.logger.warning(f"Error computing importance ratios: {e}")
+            return torch.tensor(0.0, device=self.device, requires_grad=True), {
+                "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
+                "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
+                "advantage_std": 0.0, "reward_mean": rewards.mean().item()
+            }
         
         # Check for numerical issues
         if torch.isnan(importance_ratios).any() or torch.isinf(importance_ratios).any():
@@ -315,7 +382,16 @@ class GSPOTrainer:
             }
         
         # Compute advantages
-        advantages = self.compute_advantages(rewards)
+        try:
+            advantages = self.compute_advantages(rewards)
+            self.logger.debug(f"Advantages computed: {advantages}")
+        except Exception as e:
+            self.logger.warning(f"Error computing advantages: {e}")
+            return torch.tensor(0.0, device=self.device, requires_grad=True), {
+                "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
+                "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
+                "advantage_std": 0.0, "reward_mean": rewards.mean().item()
+            }
         
         # Apply clipping to importance ratios
         clipped_ratios = torch.clamp(
@@ -323,16 +399,22 @@ class GSPOTrainer:
             1 - self.config.left_clip_range,
             1 + self.config.right_clip_range
         )
+        self.logger.debug(f"Clipped ratios: {clipped_ratios}")
         
         # Compute GSPO objective terms
         unclipped_objective = importance_ratios * advantages
         clipped_objective = clipped_ratios * advantages
         
+        self.logger.debug(f"Unclipped objective: {unclipped_objective}")
+        self.logger.debug(f"Clipped objective: {clipped_objective}")
+        
         # Take minimum (pessimistic bound)
         objective = torch.min(unclipped_objective, clipped_objective)
+        self.logger.debug(f"Final objective: {objective}")
         
         # GSPO loss is negative of objective (since we minimize)
         loss = -objective.mean()
+        self.logger.debug(f"Loss before checks: {loss}")
         
         # Check for numerical issues in loss
         if torch.isnan(loss) or torch.isinf(loss):
@@ -342,6 +424,10 @@ class GSPOTrainer:
                 "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
                 "advantage_std": 0.0, "reward_mean": rewards.mean().item()
             }
+        
+        # Check if loss is exactly zero (which might indicate a problem)
+        if loss.item() == 0.0:
+            self.logger.warning("Loss is exactly zero, this might indicate a problem")
         
         # Compute statistics for logging
         clip_fraction = (importance_ratios != clipped_ratios).float().mean()
@@ -355,6 +441,8 @@ class GSPOTrainer:
             "advantage_std": advantages.std().item(),
             "reward_mean": rewards.mean().item()
         }
+        
+        self.logger.debug(f"Final stats: {stats}")
         
         return loss, stats
     
