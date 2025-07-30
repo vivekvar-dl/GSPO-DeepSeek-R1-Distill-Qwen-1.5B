@@ -64,6 +64,12 @@ class GSPOTrainer:
         self.config = config
         self.device = device
         
+        # Initialize step counter and logging FIRST
+        self.step = 0
+        logging.basicConfig(level=logging.INFO)  # Changed back to INFO for cleaner output
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("GSPO Trainer initialized for verification")
+        
         # Ensure model is on correct device and in training mode
         self.model.to(self.device)
         self.model.train()
@@ -105,12 +111,6 @@ class GSPOTrainer:
         
         # Gradient accumulation
         self.accumulation_steps = 0
-        
-        # Logging - Enable INFO level for verification (not DEBUG)
-        self.step = 0
-        logging.basicConfig(level=logging.INFO)  # Changed back to INFO for cleaner output
-        self.logger = logging.getLogger(__name__)
-        self.logger.info("GSPO Trainer initialized for verification")
     
     def update_old_model(self):
         """Update the old model (π_θ_old) for importance ratio computation"""
