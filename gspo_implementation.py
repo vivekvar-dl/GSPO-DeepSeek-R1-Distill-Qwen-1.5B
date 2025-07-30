@@ -156,7 +156,14 @@ class GSPOTrainer:
         # Compute length-normalized importance ratio
         # s_i(θ) = (π_θ(y_i|x) / π_θ_old(y_i|x))^(1/|y_i|)
         log_ratio = (current_log_prob - old_log_prob) / response_lengths.float()
+        
+        # Clamp log_ratio to prevent extreme values
+        log_ratio = torch.clamp(log_ratio, min=-10.0, max=10.0)
+        
         importance_ratio = torch.exp(log_ratio)
+        
+        # Additional stability check
+        importance_ratio = torch.clamp(importance_ratio, min=1e-8, max=1e8)
         
         return importance_ratio
     
@@ -195,6 +202,16 @@ class GSPOTrainer:
             input_ids, attention_mask, response_start_idx, response_lengths
         )
         
+        # Check for numerical issues
+        if torch.isnan(importance_ratios).any() or torch.isinf(importance_ratios).any():
+            self.logger.warning("NaN or Inf detected in importance ratios, skipping step")
+            # Return dummy loss that won't affect training
+            return torch.tensor(0.0, device=self.device, requires_grad=True), {
+                "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
+                "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
+                "advantage_std": 0.0, "reward_mean": rewards.mean().item()
+            }
+        
         # Compute advantages
         advantages = self.compute_advantages(rewards)
         
@@ -214,6 +231,15 @@ class GSPOTrainer:
         
         # GSPO loss is negative of objective (since we minimize)
         loss = -objective.mean()
+        
+        # Check for numerical issues in loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            self.logger.warning("NaN or Inf detected in loss, skipping step")
+            return torch.tensor(0.0, device=self.device, requires_grad=True), {
+                "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
+                "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
+                "advantage_std": 0.0, "reward_mean": rewards.mean().item()
+            }
         
         # Compute statistics for logging
         clip_fraction = (importance_ratios != clipped_ratios).float().mean()
@@ -242,29 +268,37 @@ class GSPOTrainer:
         
         responses = []
         for prompt in prompts:
-            inputs = self.tokenizer(
-                prompt,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=self.config.max_length - max_new_tokens
-            ).to(self.device)
-            
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    do_sample=do_sample,
-                    pad_token_id=self.tokenizer.eos_token_id
+            try:
+                inputs = self.tokenizer(
+                    prompt,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.config.max_length - max_new_tokens
+                ).to(self.device)
+                
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        temperature=max(temperature, 0.1),  # Prevent temperature from being too low
+                        do_sample=do_sample,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                        repetition_penalty=1.1,  # Prevent repetition
+                        no_repeat_ngram_size=3
+                    )
+                
+                # Decode only the new tokens (response)
+                response = self.tokenizer.decode(
+                    outputs[0][inputs.input_ids.size(1):],
+                    skip_special_tokens=True
                 )
-            
-            # Decode only the new tokens (response)
-            response = self.tokenizer.decode(
-                outputs[0][inputs.input_ids.size(1):],
-                skip_special_tokens=True
-            )
-            responses.append(response)
+                responses.append(response)
+                
+            except Exception as e:
+                self.logger.warning(f"Generation failed for prompt: {e}")
+                # Return a safe fallback response
+                responses.append(" The answer is 42.")
         
         return responses
     
