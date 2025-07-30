@@ -106,10 +106,11 @@ class GSPOTrainer:
         # Gradient accumulation
         self.accumulation_steps = 0
         
-        # Logging
+        # Logging - Enable debug for verification
         self.step = 0
-        logging.basicConfig(level=logging.INFO)  # Back to INFO level
+        logging.basicConfig(level=logging.DEBUG)  # Enable debug logging for verification
         self.logger = logging.getLogger(__name__)
+        self.logger.info("GSPO Trainer initialized with debug logging enabled for verification")
     
     def update_old_model(self):
         """Update the old model (π_θ_old) for importance ratio computation"""
@@ -260,6 +261,14 @@ class GSPOTrainer:
         # s_i(θ) = (π_θ(y_i|x) / π_θ_old(y_i|x))^(1/|y_i|)
         log_ratio = (current_log_prob - old_log_prob) / safe_lengths
         
+        # Debug logging for GSPO verification
+        if self.step % 10 == 0:  # Log every 10 steps to avoid spam
+            self.logger.debug(f"GSPO Debug - Current log prob: {current_log_prob.mean().item():.4f}")
+            self.logger.debug(f"GSPO Debug - Old log prob: {old_log_prob.mean().item():.4f}")
+            self.logger.debug(f"GSPO Debug - Log ratio before length norm: {(current_log_prob - old_log_prob).mean().item():.4f}")
+            self.logger.debug(f"GSPO Debug - Response lengths: {safe_lengths.mean().item():.2f}")
+            self.logger.debug(f"GSPO Debug - Length normalized log ratio: {log_ratio.mean().item():.6f}")
+        
         # More aggressive clamping to prevent extreme values
         log_ratio = torch.clamp(log_ratio, min=-5.0, max=5.0)
         
@@ -267,6 +276,12 @@ class GSPOTrainer:
         
         # Additional stability check with tighter bounds
         importance_ratio = torch.clamp(importance_ratio, min=0.1, max=10.0)
+        
+        # Debug logging for importance ratios
+        if self.step % 10 == 0:
+            ratio_mean = importance_ratio.mean().item()
+            ratio_std = importance_ratio.std().item()
+            self.logger.debug(f"GSPO Debug - Importance ratio mean: {ratio_mean:.6f}, std: {ratio_std:.6f}")
         
         # Final check for numerical issues
         if torch.isnan(importance_ratio).any() or torch.isinf(importance_ratio).any():
@@ -400,6 +415,14 @@ class GSPOTrainer:
         )
         self.logger.debug(f"Clipped ratios: {clipped_ratios}")
         
+        # Debug logging for clipping verification
+        if self.step % 10 == 0:
+            clipping_occurred = not torch.equal(importance_ratios, clipped_ratios)
+            num_clipped = (importance_ratios != clipped_ratios).sum().item()
+            self.logger.debug(f"GSPO Clipping Debug - Any clipping occurred: {clipping_occurred}")
+            self.logger.debug(f"GSPO Clipping Debug - Number of ratios clipped: {num_clipped}/{importance_ratios.numel()}")
+            self.logger.debug(f"GSPO Clipping Debug - Clipping bounds: [{1 - self.config.left_clip_range:.6f}, {1 + self.config.right_clip_range:.6f}]")
+        
         # Compute GSPO objective terms
         unclipped_objective = importance_ratios * advantages
         clipped_objective = clipped_ratios * advantages
@@ -410,6 +433,12 @@ class GSPOTrainer:
         # Take minimum (pessimistic bound)
         objective = torch.min(unclipped_objective, clipped_objective)
         self.logger.debug(f"Final objective: {objective}")
+        
+        # Debug logging for objective computation
+        if self.step % 10 == 0:
+            pessimistic_bound_used = not torch.equal(unclipped_objective, objective)
+            self.logger.debug(f"GSPO Objective Debug - Pessimistic bound used: {pessimistic_bound_used}")
+            self.logger.debug(f"GSPO Objective Debug - Objective mean: {objective.mean().item():.6f}")
         
         # GSPO loss is negative of objective (since we minimize)
         loss = -objective.mean()
@@ -498,6 +527,21 @@ class GSPOTrainer:
     ) -> Dict[str, float]:
         """Single GSPO training step with aggressive memory optimization"""
         
+        # Run verification on first step and periodically
+        if self.step == 0 or self.step % 50 == 0:
+            print(f"\n🔍 Running GSPO verification at step {self.step}")
+            verification_results = self.verify_gspo_working()
+            clipping_results = self.verify_clipping_bounds()
+            
+            # Log verification results to wandb if available
+            if WANDB_AVAILABLE and wandb.run is not None:
+                wandb.log({
+                    "verification/old_model_exists": verification_results.get("old_model_exists", False),
+                    "verification/params_different": verification_results.get("params_different", False),
+                    "verification/model_requires_grad": verification_results.get("model_requires_grad", False),
+                    "verification/clipping_range_width": clipping_results.get("range_width", 0.0)
+                }, step=self.step)
+        
         # Generate multiple responses to get better batch statistics
         all_responses = []
         all_rewards = []
@@ -559,6 +603,9 @@ class GSPOTrainer:
         accumulated_stats = {}
         valid_micro_batches = 0
         
+        # Track importance ratio test for first micro-batch
+        first_micro_batch_tested = False
+        
         for i in range(0, batch_size, micro_batch_size):
             end_idx = min(i + micro_batch_size, batch_size)
             micro_batch = all_input_data[i:end_idx]
@@ -600,6 +647,24 @@ class GSPOTrainer:
             )
             
             response_start_idx = micro_batch[0]['response_start_idx']
+            
+            # Test importance ratio computation on first micro-batch of first few steps
+            if not first_micro_batch_tested and self.step < 3:
+                print(f"\n🧮 Testing importance ratio computation at step {self.step}")
+                test_results = self.test_importance_ratio_computation(
+                    input_ids, attention_mask, response_start_idx, response_lengths
+                )
+                first_micro_batch_tested = True
+                
+                # Log test results to wandb
+                if WANDB_AVAILABLE and wandb.run is not None and "error" not in test_results:
+                    wandb.log({
+                        "debug/current_log_prob": test_results["current_log_prob"],
+                        "debug/old_log_prob": test_results["old_log_prob"],
+                        "debug/log_difference": test_results["log_difference"],
+                        "debug/importance_ratio": test_results["importance_ratio"],
+                        "debug/clipping_occurred": test_results["clipping_occurred"]
+                    }, step=self.step)
             
             # Clear intermediate variables
             del micro_batch, padded_input_ids, padded_attention_mask
@@ -672,6 +737,147 @@ class GSPOTrainer:
             "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
             "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
             "advantage_std": 0.0, "reward_mean": np.mean(all_rewards)
+        }
+
+    def verify_gspo_working(self) -> Dict[str, bool]:
+        """Debug function to verify GSPO components are working correctly"""
+        verification_results = {}
+        
+        print("\n" + "="*50)
+        print("🔍 GSPO VERIFICATION CHECK")
+        print("="*50)
+        
+        # 1. Check if old model exists and is different
+        old_model_exists = self.old_model is not None
+        verification_results["old_model_exists"] = old_model_exists
+        print(f"✓ Old model exists: {old_model_exists}")
+        
+        if old_model_exists:
+            # Check if models are different objects
+            models_different_objects = id(self.model) != id(self.old_model)
+            verification_results["models_different_objects"] = models_different_objects
+            print(f"✓ Models are different objects: {models_different_objects}")
+            
+            # Check if model parameters are actually different
+            try:
+                current_param = next(self.model.parameters()).flatten()[:100]
+                old_param = next(self.old_model.parameters()).flatten()[:100]
+                params_different = not torch.allclose(current_param, old_param, atol=1e-6)
+                verification_results["params_different"] = params_different
+                print(f"✓ Model parameters different: {params_different}")
+                
+                if params_different:
+                    param_diff = torch.mean(torch.abs(current_param - old_param)).item()
+                    print(f"  → Parameter difference magnitude: {param_diff:.8f}")
+                else:
+                    print("  ⚠️  Parameters are identical - this might indicate a problem!")
+                    
+            except Exception as e:
+                print(f"  ❌ Error checking parameter differences: {e}")
+                verification_results["params_different"] = False
+        
+        # 2. Check GSPO configuration
+        print(f"\n📋 GSPO Configuration:")
+        print(f"  → Left clip range: {self.config.left_clip_range}")
+        print(f"  → Right clip range: {self.config.right_clip_range}")
+        print(f"  → Group size: {self.config.group_size}")
+        print(f"  → Learning rate: {self.config.learning_rate}")
+        
+        # 3. Check if gradients are enabled properly
+        model_requires_grad = any(p.requires_grad for p in self.model.parameters())
+        old_model_requires_grad = any(p.requires_grad for p in self.old_model.parameters()) if old_model_exists else False
+        
+        verification_results["model_requires_grad"] = model_requires_grad
+        verification_results["old_model_frozen"] = not old_model_requires_grad
+        
+        print(f"\n🎯 Gradient Configuration:")
+        print(f"  → Current model requires_grad: {model_requires_grad}")
+        print(f"  → Old model frozen (good): {not old_model_requires_grad}")
+        
+        # 4. Training step verification
+        training_step = self.step
+        print(f"\n📈 Training Progress:")
+        print(f"  → Current training step: {training_step}")
+        print(f"  → Accumulation steps: {self.accumulation_steps}/{self.config.gradient_accumulation_steps}")
+        
+        return verification_results
+    
+    def test_importance_ratio_computation(self, test_input_ids, test_attention_mask, response_start_idx, response_lengths):
+        """Test importance ratio computation with debug output"""
+        print("\n" + "="*50)
+        print("🧮 TESTING IMPORTANCE RATIO COMPUTATION")
+        print("="*50)
+        
+        try:
+            # Compute current model log prob
+            current_log_prob = self.compute_sequence_log_prob(
+                self.model, test_input_ids, test_attention_mask, response_start_idx, requires_grad=True
+            )
+            print(f"✓ Current model log prob: {current_log_prob}")
+            
+            # Compute old model log prob
+            old_log_prob = self.compute_sequence_log_prob(
+                self.old_model, test_input_ids, test_attention_mask, response_start_idx, requires_grad=False
+            )
+            print(f"✓ Old model log prob: {old_log_prob}")
+            
+            # Compute difference
+            log_diff = current_log_prob - old_log_prob
+            print(f"✓ Log probability difference: {log_diff}")
+            
+            # Length normalization
+            safe_lengths = torch.clamp(response_lengths.float(), min=1.0)
+            normalized_log_ratio = log_diff / safe_lengths
+            print(f"✓ Length normalized log ratio: {normalized_log_ratio}")
+            print(f"✓ Response lengths: {response_lengths}")
+            
+            # Final importance ratio
+            importance_ratio = torch.exp(normalized_log_ratio)
+            print(f"✓ Raw importance ratio: {importance_ratio}")
+            
+            # Clipped importance ratio
+            clipped_ratio = torch.clamp(importance_ratio, min=0.1, max=10.0)
+            print(f"✓ Clipped importance ratio: {clipped_ratio}")
+            
+            # Check if clipping occurred
+            clipping_occurred = not torch.equal(importance_ratio, clipped_ratio)
+            print(f"✓ Clipping occurred: {clipping_occurred}")
+            
+            return {
+                "current_log_prob": current_log_prob.item(),
+                "old_log_prob": old_log_prob.item(), 
+                "log_difference": log_diff.item(),
+                "importance_ratio": importance_ratio.item(),
+                "clipping_occurred": clipping_occurred
+            }
+            
+        except Exception as e:
+            print(f"❌ Error in importance ratio test: {e}")
+            return {"error": str(e)}
+    
+    def verify_clipping_bounds(self):
+        """Verify GSPO clipping bounds are reasonable"""
+        print("\n" + "="*50)
+        print("✂️ VERIFYING CLIPPING BOUNDS")
+        print("="*50)
+        
+        left_bound = 1 - self.config.left_clip_range  # Should be ~0.9997
+        right_bound = 1 + self.config.right_clip_range  # Should be ~1.0004
+        
+        print(f"✓ Left clipping bound: {left_bound:.6f}")
+        print(f"✓ Right clipping bound: {right_bound:.6f}")
+        print(f"✓ Clipping range width: {right_bound - left_bound:.6f}")
+        
+        if self.config.left_clip_range > 0.01 or self.config.right_clip_range > 0.01:
+            print("⚠️  Clipping ranges seem large - GSPO uses very conservative clipping!")
+        
+        if self.config.left_clip_range == self.config.right_clip_range:
+            print("⚠️  Left and right clip ranges are equal - this is unusual for GSPO")
+        
+        return {
+            "left_bound": left_bound,
+            "right_bound": right_bound,
+            "range_width": right_bound - left_bound
         }
 
 def create_math_reward_function():
