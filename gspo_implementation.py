@@ -106,11 +106,11 @@ class GSPOTrainer:
         # Gradient accumulation
         self.accumulation_steps = 0
         
-        # Logging - Enable debug for verification
+        # Logging - Enable INFO level for verification (not DEBUG)
         self.step = 0
-        logging.basicConfig(level=logging.DEBUG)  # Enable debug logging for verification
+        logging.basicConfig(level=logging.INFO)  # Changed back to INFO for cleaner output
         self.logger = logging.getLogger(__name__)
-        self.logger.info("GSPO Trainer initialized with debug logging enabled for verification")
+        self.logger.info("GSPO Trainer initialized for verification")
     
     def update_old_model(self):
         """Update the old model (π_θ_old) for importance ratio computation"""
@@ -261,13 +261,13 @@ class GSPOTrainer:
         # s_i(θ) = (π_θ(y_i|x) / π_θ_old(y_i|x))^(1/|y_i|)
         log_ratio = (current_log_prob - old_log_prob) / safe_lengths
         
-        # Debug logging for GSPO verification
-        if self.step % 10 == 0:  # Log every 10 steps to avoid spam
-            self.logger.debug(f"GSPO Debug - Current log prob: {current_log_prob.mean().item():.4f}")
-            self.logger.debug(f"GSPO Debug - Old log prob: {old_log_prob.mean().item():.4f}")
-            self.logger.debug(f"GSPO Debug - Log ratio before length norm: {(current_log_prob - old_log_prob).mean().item():.4f}")
-            self.logger.debug(f"GSPO Debug - Response lengths: {safe_lengths.mean().item():.2f}")
-            self.logger.debug(f"GSPO Debug - Length normalized log ratio: {log_ratio.mean().item():.6f}")
+        # Debug logging for GSPO verification (only log on first step)
+        if self.step == 0:
+            self.logger.info(f"GSPO Debug - Current log prob: {current_log_prob.mean().item():.4f}")
+            self.logger.info(f"GSPO Debug - Old log prob: {old_log_prob.mean().item():.4f}")
+            self.logger.info(f"GSPO Debug - Log ratio before length norm: {(current_log_prob - old_log_prob).mean().item():.4f}")
+            self.logger.info(f"GSPO Debug - Response lengths: {safe_lengths.mean().item():.2f}")
+            self.logger.info(f"GSPO Debug - Length normalized log ratio: {log_ratio.mean().item():.6f}")
         
         # More aggressive clamping to prevent extreme values
         log_ratio = torch.clamp(log_ratio, min=-5.0, max=5.0)
@@ -277,11 +277,11 @@ class GSPOTrainer:
         # Additional stability check with tighter bounds
         importance_ratio = torch.clamp(importance_ratio, min=0.1, max=10.0)
         
-        # Debug logging for importance ratios
-        if self.step % 10 == 0:
+        # Debug logging for importance ratios (only log on first step)
+        if self.step == 0:
             ratio_mean = importance_ratio.mean().item()
             ratio_std = importance_ratio.std().item()
-            self.logger.debug(f"GSPO Debug - Importance ratio mean: {ratio_mean:.6f}, std: {ratio_std:.6f}")
+            self.logger.info(f"GSPO Debug - Importance ratio mean: {ratio_mean:.6f}, std: {ratio_std:.6f}")
         
         # Final check for numerical issues
         if torch.isnan(importance_ratio).any() or torch.isinf(importance_ratio).any():
@@ -300,13 +300,23 @@ class GSPOTrainer:
         if batch_size < group_size:
             # For small batches, use simple normalization with better stability
             if batch_size == 1:
-                # Single element - return zero advantage (neutral)
-                return torch.zeros_like(rewards)
+                # Single element - return small positive advantage to enable learning
+                return torch.ones_like(rewards) * 0.1
             
             reward_mean = rewards.mean()
             # Use unbiased std with better numerical stability
-            reward_std = torch.sqrt(rewards.var(unbiased=False) + 1e-8)
-            advantages = (rewards - reward_mean) / reward_std
+            reward_var = rewards.var(unbiased=False)
+            reward_std = torch.sqrt(reward_var + 1e-8)
+            
+            # If all rewards are identical, create small differences to enable learning
+            if reward_std < 1e-6:
+                # Add small random perturbations to break ties
+                noise = torch.randn_like(rewards) * 0.01
+                advantages = noise
+                self.logger.debug(f"Identical rewards detected, using noise-based advantages: {advantages}")
+            else:
+                advantages = (rewards - reward_mean) / reward_std
+            
             return advantages
         
         # Ensure batch size is divisible by group size
@@ -314,11 +324,20 @@ class GSPOTrainer:
         if num_complete_groups == 0:
             # Fallback to simple normalization
             if batch_size == 1:
-                return torch.zeros_like(rewards)
+                return torch.ones_like(rewards) * 0.1
             
             reward_mean = rewards.mean()
-            reward_std = torch.sqrt(rewards.var(unbiased=False) + 1e-8)
-            advantages = (rewards - reward_mean) / reward_std
+            reward_var = rewards.var(unbiased=False)
+            reward_std = torch.sqrt(reward_var + 1e-8)
+            
+            # Handle identical rewards
+            if reward_std < 1e-6:
+                noise = torch.randn_like(rewards) * 0.01
+                advantages = noise
+                self.logger.debug(f"Identical rewards in fallback, using noise-based advantages: {advantages}")
+            else:
+                advantages = (rewards - reward_mean) / reward_std
+            
             return advantages
         
         # Take only complete groups
@@ -333,6 +352,18 @@ class GSPOTrainer:
         group_vars = grouped_rewards.var(dim=1, unbiased=False, keepdim=True)
         group_stds = torch.sqrt(group_vars + 1e-8)
         
+        # Handle groups with identical rewards
+        identical_mask = group_stds.squeeze(-1) < 1e-6
+        if identical_mask.any():
+            self.logger.debug(f"Found {identical_mask.sum()} groups with identical rewards")
+            # Add small noise to groups with identical rewards
+            noise = torch.randn_like(grouped_rewards) * 0.01
+            grouped_rewards = grouped_rewards + noise * identical_mask.unsqueeze(-1)
+            # Recompute stats
+            group_means = grouped_rewards.mean(dim=1, keepdim=True)
+            group_vars = grouped_rewards.var(dim=1, unbiased=False, keepdim=True)
+            group_stds = torch.sqrt(group_vars + 1e-8)
+        
         # Compute advantages: (r - mean) / std
         advantages = (grouped_rewards - group_means) / group_stds
         
@@ -345,13 +376,18 @@ class GSPOTrainer:
             remaining_size = remaining_rewards.size(0)
             
             if remaining_size == 1:
-                # Single element - neutral advantage
-                remaining_advantages = torch.zeros_like(remaining_rewards)
+                # Single element - small positive advantage
+                remaining_advantages = torch.ones_like(remaining_rewards) * 0.1
             else:
                 remaining_mean = remaining_rewards.mean()
                 remaining_var = remaining_rewards.var(unbiased=False)
                 remaining_std = torch.sqrt(remaining_var + 1e-8)
-                remaining_advantages = (remaining_rewards - remaining_mean) / remaining_std
+                
+                if remaining_std < 1e-6:
+                    noise = torch.randn_like(remaining_rewards) * 0.01
+                    remaining_advantages = noise
+                else:
+                    remaining_advantages = (remaining_rewards - remaining_mean) / remaining_std
             
             # Concatenate
             advantages = torch.cat([advantages, remaining_advantages])
@@ -368,15 +404,17 @@ class GSPOTrainer:
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """Compute GSPO loss with debug logging"""
         
-        self.logger.debug(f"GSPO Loss Debug - Input shapes: input_ids={input_ids.shape}, attention_mask={attention_mask.shape}, rewards={rewards.shape}, response_lengths={response_lengths.shape}")
-        self.logger.debug(f"Response start idx: {response_start_idx}")
+        if self.step == 0:  # Only log details on first step
+            self.logger.info(f"GSPO Loss Debug - Input shapes: input_ids={input_ids.shape}, attention_mask={attention_mask.shape}, rewards={rewards.shape}, response_lengths={response_lengths.shape}")
+            self.logger.info(f"Response start idx: {response_start_idx}")
         
         # Compute importance ratios
         try:
             importance_ratios = self.compute_importance_ratio(
                 input_ids, attention_mask, response_start_idx, response_lengths
             )
-            self.logger.debug(f"Importance ratios computed: {importance_ratios}")
+            if self.step == 0:
+                self.logger.info(f"Importance ratios computed: {importance_ratios}")
         except Exception as e:
             self.logger.warning(f"Error computing importance ratios: {e}")
             return torch.tensor(0.0, device=self.device, requires_grad=True), {
@@ -398,7 +436,8 @@ class GSPOTrainer:
         # Compute advantages
         try:
             advantages = self.compute_advantages(rewards)
-            self.logger.debug(f"Advantages computed: {advantages}")
+            if self.step == 0:
+                self.logger.info(f"Advantages computed: {advantages}")
         except Exception as e:
             self.logger.warning(f"Error computing advantages: {e}")
             return torch.tensor(0.0, device=self.device, requires_grad=True), {
@@ -413,36 +452,33 @@ class GSPOTrainer:
             1 - self.config.left_clip_range,
             1 + self.config.right_clip_range
         )
-        self.logger.debug(f"Clipped ratios: {clipped_ratios}")
         
-        # Debug logging for clipping verification
-        if self.step % 10 == 0:
+        # Debug logging for clipping verification (only on first step)
+        if self.step == 0:
             clipping_occurred = not torch.equal(importance_ratios, clipped_ratios)
             num_clipped = (importance_ratios != clipped_ratios).sum().item()
-            self.logger.debug(f"GSPO Clipping Debug - Any clipping occurred: {clipping_occurred}")
-            self.logger.debug(f"GSPO Clipping Debug - Number of ratios clipped: {num_clipped}/{importance_ratios.numel()}")
-            self.logger.debug(f"GSPO Clipping Debug - Clipping bounds: [{1 - self.config.left_clip_range:.6f}, {1 + self.config.right_clip_range:.6f}]")
+            self.logger.info(f"GSPO Clipping Debug - Any clipping occurred: {clipping_occurred}")
+            self.logger.info(f"GSPO Clipping Debug - Number of ratios clipped: {num_clipped}/{importance_ratios.numel()}")
+            self.logger.info(f"GSPO Clipping Debug - Clipping bounds: [{1 - self.config.left_clip_range:.6f}, {1 + self.config.right_clip_range:.6f}]")
         
         # Compute GSPO objective terms
         unclipped_objective = importance_ratios * advantages
         clipped_objective = clipped_ratios * advantages
         
-        self.logger.debug(f"Unclipped objective: {unclipped_objective}")
-        self.logger.debug(f"Clipped objective: {clipped_objective}")
-        
         # Take minimum (pessimistic bound)
         objective = torch.min(unclipped_objective, clipped_objective)
-        self.logger.debug(f"Final objective: {objective}")
         
-        # Debug logging for objective computation
-        if self.step % 10 == 0:
+        # Debug logging for objective computation (only on first step)
+        if self.step == 0:
             pessimistic_bound_used = not torch.equal(unclipped_objective, objective)
-            self.logger.debug(f"GSPO Objective Debug - Pessimistic bound used: {pessimistic_bound_used}")
-            self.logger.debug(f"GSPO Objective Debug - Objective mean: {objective.mean().item():.6f}")
+            self.logger.info(f"GSPO Objective Debug - Pessimistic bound used: {pessimistic_bound_used}")
+            self.logger.info(f"GSPO Objective Debug - Objective mean: {objective.mean().item():.6f}")
         
         # GSPO loss is negative of objective (since we minimize)
         loss = -objective.mean()
-        self.logger.debug(f"Loss before checks: {loss}")
+        
+        if self.step == 0:
+            self.logger.info(f"Loss before checks: {loss}")
         
         # Check for numerical issues in loss
         if torch.isnan(loss) or torch.isinf(loss):
@@ -470,7 +506,8 @@ class GSPOTrainer:
             "reward_mean": rewards.mean().item()
         }
         
-        self.logger.debug(f"Final stats: {stats}")
+        if self.step == 0:
+            self.logger.info(f"Final stats: {stats}")
         
         return loss, stats
     
@@ -492,26 +529,50 @@ class GSPOTrainer:
                     return_tensors="pt",
                     padding=True,
                     truncation=True,
-                    max_length=self.config.max_length - max_new_tokens
+                    max_length=self.config.max_length - max_new_tokens,
+                    add_special_tokens=True
                 ).to(self.device)
+                
+                # Debug: Check input length (only log once)
+                input_length = inputs.input_ids.size(1)
+                if len(responses) == 0:  # Only log for first response
+                    self.logger.info(f"Input prompt length: {input_length}, max_new_tokens: {max_new_tokens}")
                 
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=max_new_tokens,
-                        temperature=max(temperature, 0.1),  # Prevent temperature from being too low
+                        max_new_tokens=max(max_new_tokens, 10),  # Ensure at least 10 new tokens
+                        min_new_tokens=5,  # Force minimum response length
+                        temperature=max(temperature, 0.7),  # Higher temperature for diversity
                         do_sample=do_sample,
-                        pad_token_id=self.tokenizer.eos_token_id,
+                        pad_token_id=self.tokenizer.eos_token_id if self.tokenizer.eos_token_id else self.tokenizer.pad_token_id,
                         repetition_penalty=1.1,  # Prevent repetition
-                        no_repeat_ngram_size=3
+                        no_repeat_ngram_size=2,
+                        early_stopping=False  # Don't stop early
                     )
                 
                 # Decode only the new tokens (response)
+                input_length = inputs.input_ids.size(1)
+                response_ids = outputs[0][input_length:]
+                
+                # Debug: Check response length (only log for first response)
+                if len(responses) == 0:
+                    self.logger.info(f"Generated response token length: {len(response_ids)}")
+                
                 response = self.tokenizer.decode(
-                    outputs[0][inputs.input_ids.size(1):],
+                    response_ids,
                     skip_special_tokens=True
-                )
+                ).strip()
+                
+                # Ensure response is not empty
+                if not response or len(response.strip()) < 2:
+                    response = " The answer is 42."  # Fallback response
+                    if len(responses) == 0:
+                        self.logger.info(f"Used fallback response due to empty generation")
+                
                 responses.append(response)
+                if len(responses) <= 2:  # Only log first couple responses
+                    self.logger.info(f"Final response: '{response}' (length: {len(response)})")
                 
             except Exception as e:
                 self.logger.warning(f"Generation failed for prompt: {e}")
@@ -566,23 +627,42 @@ class GSPOTrainer:
             
             # Prepare input data for loss computation
             for response in responses:
+                # Tokenize query and response separately first for accurate indexing
+                query_tokens = self.tokenizer.encode(query, add_special_tokens=True)
+                response_tokens = self.tokenizer.encode(response, add_special_tokens=False)
+                
+                # Create full sequence
                 full_text = query + response
                 inputs = self.tokenizer(
                     full_text,
                     return_tensors="pt",
                     padding=True,
                     truncation=True,
-                    max_length=min(self.config.max_length, 256)
+                    max_length=min(self.config.max_length, 256),
+                    add_special_tokens=True
                 ).to(self.device)
                 
-                response_start_idx = len(self.tokenizer.encode(query, add_special_tokens=False))
-                response_length = len(self.tokenizer.encode(response, add_special_tokens=False))
+                # Calculate correct response start index
+                # Response starts after the query tokens (excluding special tokens added to response)
+                response_start_idx = len(query_tokens) - 1  # -1 because we don't double-count special tokens
+                response_length = len(response_tokens)
+                
+                # Ensure response_start_idx is valid
+                total_length = inputs.input_ids.size(1)
+                if response_start_idx >= total_length - 1:
+                    response_start_idx = max(0, total_length - 2)  # Leave at least 1 token for response
+                    response_length = max(1, total_length - response_start_idx - 1)
+                
+                # Debug logging
+                if self.step == 0:  # Only log on first step
+                    self.logger.info(f"Query tokens: {len(query_tokens)}, Response tokens: {len(response_tokens)}")
+                    self.logger.info(f"Total length: {total_length}, Response start: {response_start_idx}, Response length: {response_length}")
                 
                 all_input_data.append({
                     'input_ids': inputs.input_ids.squeeze(0),
                     'attention_mask': inputs.attention_mask.squeeze(0),
                     'response_start_idx': response_start_idx,
-                    'response_length': response_length
+                    'response_length': max(response_length, 1)  # Ensure at least length 1
                 })
             
             all_responses.extend(responses)

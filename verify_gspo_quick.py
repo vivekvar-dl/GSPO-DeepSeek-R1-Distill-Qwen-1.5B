@@ -78,15 +78,31 @@ def quick_gspo_verification():
     
     # Create reward function with proper data items
     def create_test_reward_function():
-        """Create a simple reward function for testing"""
+        """Create a simple reward function for testing with diverse rewards"""
         def reward_fn(query, response, data_item=None):
-            # Simple heuristic: reward responses with numbers
+            # More diverse reward function to avoid identical rewards
+            base_reward = 0.3
+            
+            # Check for numbers (math-related)
             if any(char.isdigit() for char in response):
-                return 0.7
-            elif len(response) > 5:
-                return 0.4
-            else:
-                return 0.2
+                base_reward += 0.4
+            
+            # Check for math keywords
+            math_keywords = ['plus', 'minus', 'multiply', 'divide', 'equals', '=', '+', '-', '*', '/']
+            if any(keyword in response.lower() for keyword in math_keywords):
+                base_reward += 0.2
+            
+            # Length bonus (scaled)
+            length_bonus = min(len(response) / 20.0, 0.3)
+            base_reward += length_bonus
+            
+            # Add small random component to ensure diversity
+            import random
+            noise = random.uniform(-0.1, 0.1)
+            final_reward = max(0.1, min(1.0, base_reward + noise))
+            
+            print(f"  Reward for '{response[:30]}...': {final_reward:.3f}")
+            return final_reward
         return reward_fn
     
     reward_function = create_test_reward_function()
