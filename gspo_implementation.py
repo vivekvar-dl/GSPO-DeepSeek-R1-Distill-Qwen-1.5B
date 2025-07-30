@@ -7,6 +7,14 @@ import logging
 from dataclasses import dataclass
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
+# Optional imports for memory optimization
+try:
+    import bitsandbytes as bnb
+    BNB_AVAILABLE = True
+except ImportError:
+    BNB_AVAILABLE = False
+    bnb = None
+
 # Optional wandb import
 try:
     import wandb
@@ -21,13 +29,19 @@ class GSPOConfig:
     # Core GSPO parameters
     left_clip_range: float = 3e-4
     right_clip_range: float = 4e-4
-    group_size: int = 4  # G in the paper
+    group_size: int = 2  # Reduced default for memory
     
-    # Training parameters
+    # Training parameters - memory optimized defaults
     learning_rate: float = 1e-6
-    batch_size: int = 8
-    mini_batch_size: int = 2  # For gradient accumulation
-    max_length: int = 512
+    batch_size: int = 1  # Very small for memory
+    mini_batch_size: int = 1
+    max_length: int = 256  # Reduced sequence length
+    gradient_accumulation_steps: int = 4  # Accumulate gradients
+    
+    # Memory optimization
+    use_8bit_optimizer: bool = True
+    use_gradient_checkpointing: bool = True
+    max_grad_norm: float = 0.3  # Aggressive clipping
     
     # Reward normalization
     reward_normalization: bool = True
@@ -54,6 +68,11 @@ class GSPOTrainer:
         self.model.to(self.device)
         self.model.train()
         
+        # Enable gradient checkpointing if requested
+        if config.use_gradient_checkpointing and hasattr(model, 'gradient_checkpointing_enable'):
+            model.gradient_checkpointing_enable()
+            print("✓ Gradient checkpointing enabled")
+        
         # Ensure model parameters require gradients
         for param in self.model.parameters():
             param.requires_grad_(True)
@@ -62,11 +81,30 @@ class GSPOTrainer:
         self.old_model = None
         self.update_old_model()
         
-        # Optimizer
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(), 
-            lr=config.learning_rate
-        )
+        # Use memory-efficient optimizer
+        if config.use_8bit_optimizer and BNB_AVAILABLE:
+            self.optimizer = bnb.optim.AdamW8bit(
+                self.model.parameters(), 
+                lr=config.learning_rate,
+                betas=(0.9, 0.999),
+                eps=1e-8,
+                weight_decay=0.0
+            )
+            print("✓ Using 8-bit AdamW optimizer")
+        else:
+            # Fallback to regular AdamW with memory optimizations
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(), 
+                lr=config.learning_rate,
+                betas=(0.9, 0.95),  # More stable betas
+                eps=1e-8,
+                weight_decay=0.0,
+                foreach=False  # Disable foreach for memory
+            )
+            print("✓ Using regular AdamW optimizer")
+        
+        # Gradient accumulation
+        self.accumulation_steps = 0
         
         # Logging
         self.step = 0
@@ -103,36 +141,38 @@ class GSPOTrainer:
         """Compute log probability of sequence y given x"""
         
         def _compute_log_prob():
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = outputs.logits
-            
-            # Shift logits and labels for next-token prediction
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = input_ids[..., 1:].contiguous()
-            
-            # Only consider the response part (after prompt)
-            response_logits = shift_logits[:, response_start_idx:]
-            response_labels = shift_labels[:, response_start_idx:]
-            
-            # Compute log probabilities
-            log_probs = F.log_softmax(response_logits, dim=-1)
-            
-            # Gather log probabilities for actual tokens
-            token_log_probs = log_probs.gather(
-                dim=-1, 
-                index=response_labels.unsqueeze(-1)
-            ).squeeze(-1)
-            
-            # Apply attention mask to ignore padded tokens
-            response_mask = attention_mask[:, response_start_idx+1:response_start_idx+1+token_log_probs.shape[1]]
-            if response_mask.shape[1] != token_log_probs.shape[1]:
-                # Adjust mask size if needed
-                min_len = min(response_mask.shape[1], token_log_probs.shape[1])
-                response_mask = response_mask[:, :min_len]
-                token_log_probs = token_log_probs[:, :min_len]
-            
-            sequence_log_prob = (token_log_probs * response_mask).sum(dim=-1)
-            return sequence_log_prob
+            # Use autocast for memory efficiency
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs.logits
+                
+                # Shift logits and labels for next-token prediction
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = input_ids[..., 1:].contiguous()
+                
+                # Only consider the response part (after prompt)
+                response_logits = shift_logits[:, response_start_idx:]
+                response_labels = shift_labels[:, response_start_idx:]
+                
+                # Compute log probabilities
+                log_probs = F.log_softmax(response_logits, dim=-1)
+                
+                # Gather log probabilities for actual tokens
+                token_log_probs = log_probs.gather(
+                    dim=-1, 
+                    index=response_labels.unsqueeze(-1)
+                ).squeeze(-1)
+                
+                # Apply attention mask to ignore padded tokens
+                response_mask = attention_mask[:, response_start_idx+1:response_start_idx+1+token_log_probs.shape[1]]
+                if response_mask.shape[1] != token_log_probs.shape[1]:
+                    # Adjust mask size if needed
+                    min_len = min(response_mask.shape[1], token_log_probs.shape[1])
+                    response_mask = response_mask[:, :min_len]
+                    token_log_probs = token_log_probs[:, :min_len]
+                
+                sequence_log_prob = (token_log_probs * response_mask).sum(dim=-1)
+                return sequence_log_prob
         
         if requires_grad:
             return _compute_log_prob()
@@ -313,18 +353,23 @@ class GSPOTrainer:
         queries: List[str],
         reward_function: callable
     ) -> Dict[str, float]:
-        """Single GSPO training step with memory optimization"""
+        """Single GSPO training step with aggressive memory optimization"""
         
-        # Generate multiple responses per query (group size)
+        # Only process one query at a time for memory
+        if len(queries) > 1:
+            queries = queries[:1]
+        
+        # Generate responses with very conservative settings
         all_responses = []
         all_rewards = []
         all_input_data = []
         
         for query in queries:
-            # Generate G responses for this query
+            # Generate only 2 responses for memory
+            group_size = min(self.config.group_size, 2)
             responses = self.generate_responses(
-                [query] * self.config.group_size,
-                max_new_tokens=128  # Reduced token length for memory
+                [query] * group_size,
+                max_new_tokens=64  # Very short responses
             )
             
             # Compute rewards for responses
@@ -341,7 +386,7 @@ class GSPOTrainer:
                     return_tensors="pt",
                     padding=True,
                     truncation=True,
-                    max_length=self.config.max_length
+                    max_length=min(self.config.max_length, 256)
                 ).to(self.device)
                 
                 response_start_idx = len(self.tokenizer.encode(query, add_special_tokens=False))
@@ -357,83 +402,108 @@ class GSPOTrainer:
             all_responses.extend(responses)
             all_rewards.extend(query_rewards)
         
-        # Convert to tensors
-        rewards_tensor = torch.tensor(all_rewards, device=self.device, dtype=torch.float)
+        # Process in micro-batches if necessary
+        batch_size = len(all_input_data)
+        micro_batch_size = 1  # Process one sample at a time
         
-        # Pad sequences to same length for batching
-        max_length = max(item['input_ids'].size(0) for item in all_input_data)
+        total_loss = 0.0
+        total_stats = {}
         
-        padded_input_ids = []
-        padded_attention_mask = []
-        
-        for item in all_input_data:
-            input_ids = item['input_ids']
-            attention_mask = item['attention_mask']
+        for i in range(0, batch_size, micro_batch_size):
+            end_idx = min(i + micro_batch_size, batch_size)
+            micro_batch = all_input_data[i:end_idx]
+            micro_rewards = all_rewards[i:end_idx]
             
-            # Pad to max_length
-            pad_length = max_length - input_ids.size(0)
-            if pad_length > 0:
-                input_ids = F.pad(input_ids, (0, pad_length), value=self.tokenizer.pad_token_id)
-                attention_mask = F.pad(attention_mask, (0, pad_length), value=0)
+            # Convert to tensors
+            rewards_tensor = torch.tensor(micro_rewards, device=self.device, dtype=torch.float)
             
-            padded_input_ids.append(input_ids)
-            padded_attention_mask.append(attention_mask)
-        
-        # Stack padded tensors
-        input_ids = torch.stack(padded_input_ids)
-        attention_mask = torch.stack(padded_attention_mask)
-        response_lengths = torch.tensor(
-            [item['response_length'] for item in all_input_data],
-            device=self.device,
-            dtype=torch.float
-        )
-        
-        # Assume same response_start_idx for simplicity (can be generalized)
-        response_start_idx = all_input_data[0]['response_start_idx']
-        
-        # Clear intermediate variables to save memory
-        del all_input_data, padded_input_ids, padded_attention_mask
-        
-        # Compute loss
-        self.model.train()
-        loss, stats = self.gspo_loss(
-            input_ids, attention_mask, rewards_tensor, 
-            response_start_idx, response_lengths
-        )
-        
-        # Skip step if loss is problematic
-        if torch.isnan(loss) or torch.isinf(loss) or loss.item() == 0.0:
-            self.logger.warning("Skipping step due to problematic loss")
+            # Pad sequences to same length for batching
+            max_length = max(item['input_ids'].size(0) for item in micro_batch)
+            
+            padded_input_ids = []
+            padded_attention_mask = []
+            
+            for item in micro_batch:
+                input_ids = item['input_ids']
+                attention_mask = item['attention_mask']
+                
+                # Pad to max_length
+                pad_length = max_length - input_ids.size(0)
+                if pad_length > 0:
+                    input_ids = F.pad(input_ids, (0, pad_length), value=self.tokenizer.pad_token_id)
+                    attention_mask = F.pad(attention_mask, (0, pad_length), value=0)
+                
+                padded_input_ids.append(input_ids)
+                padded_attention_mask.append(attention_mask)
+            
+            # Stack padded tensors
+            input_ids = torch.stack(padded_input_ids)
+            attention_mask = torch.stack(padded_attention_mask)
+            response_lengths = torch.tensor(
+                [item['response_length'] for item in micro_batch],
+                device=self.device,
+                dtype=torch.float
+            )
+            
+            response_start_idx = micro_batch[0]['response_start_idx']
+            
+            # Clear intermediate variables
+            del micro_batch, padded_input_ids, padded_attention_mask
+            
+            # Compute loss with autocast
+            self.model.train()
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                loss, stats = self.gspo_loss(
+                    input_ids, attention_mask, rewards_tensor, 
+                    response_start_idx, response_lengths
+                )
+            
+            # Skip step if loss is problematic
+            if torch.isnan(loss) or torch.isinf(loss) or loss.item() == 0.0:
+                self.logger.warning("Skipping micro-batch due to problematic loss")
+                continue
+            
+            # Scale loss for gradient accumulation
+            scaled_loss = loss / self.config.gradient_accumulation_steps
+            
+            # Backward pass
+            scaled_loss.backward()
+            
+            total_loss += loss.item()
+            if not total_stats:
+                total_stats = stats
+            
+            # Clear cache
             torch.cuda.empty_cache()
-            return {
-                "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
-                "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
-                "advantage_std": 0.0, "reward_mean": rewards_tensor.mean().item()
-            }
         
-        # Backward pass with gradient scaling for stability
-        self.optimizer.zero_grad()
+        # Update accumulation counter
+        self.accumulation_steps += 1
         
-        # Scale loss to prevent gradient explosion
-        scaled_loss = loss / 10.0
-        scaled_loss.backward()
-        
-        # Gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-        self.optimizer.step()
-        
-        self.step += 1
+        # Only step optimizer after accumulation_steps
+        if self.accumulation_steps >= self.config.gradient_accumulation_steps:
+            # Gradient clipping for stability
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+            
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            self.accumulation_steps = 0
+            
+            self.step += 1
         
         # Log statistics
         if self.step % self.config.log_frequency == 0:
-            self.logger.info(f"Step {self.step}: {stats}")
+            self.logger.info(f"Step {self.step}: {total_stats}")
             if WANDB_AVAILABLE and wandb.run is not None:
-                wandb.log(stats, step=self.step)
+                wandb.log(total_stats, step=self.step)
         
-        # Clear cache to free memory
+        # Aggressive cache clearing
         torch.cuda.empty_cache()
         
-        return stats
+        return total_stats if total_stats else {
+            "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
+            "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
+            "advantage_std": 0.0, "reward_mean": np.mean(all_rewards)
+        }
 
 def create_math_reward_function():
     """Simple reward function for math problems"""
