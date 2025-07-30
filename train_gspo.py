@@ -355,10 +355,14 @@ def main():
             if trainer.step % 5 == 0:
                 torch.cuda.empty_cache()
         
-        # Update old model periodically
-        if (epoch + 1) % args.update_frequency == 0:
+        # Update old model periodically - only after sufficient training steps
+        # Update every update_frequency epochs AND only if we've had enough steps
+        if (epoch + 1) % args.update_frequency == 0 and trainer.step >= 20:
+            # Also ensure some actual parameter changes have occurred by checking step count
             trainer.update_old_model()
-            print(f"Updated old model at epoch {epoch + 1}")
+            print(f"Updated old model at epoch {epoch + 1}, step {trainer.step}")
+        elif (epoch + 1) % args.update_frequency == 0 and trainer.step < 20:
+            print(f"Skipping old model update at epoch {epoch + 1} - only {trainer.step} steps completed")
         
         # Epoch summary
         avg_loss = sum(s["loss"] for s in epoch_stats) / len(epoch_stats)
