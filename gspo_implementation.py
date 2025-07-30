@@ -198,7 +198,7 @@ class GSPOTrainer:
                     # Ensure we have valid dimensions
                     if logits.size(1) <= 1:
                         self.logger.warning("Sequence too short for log prob computation")
-                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                        return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
                     
                     # Shift logits and labels for next-token prediction
                     shift_logits = logits[..., :-1, :].contiguous()
@@ -210,7 +210,7 @@ class GSPOTrainer:
                     
                     if safe_response_start >= shift_logits.size(1):
                         self.logger.warning("Response start index out of bounds")
-                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                        return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
                     
                     # Only consider the response part (after prompt)
                     response_logits = shift_logits[:, safe_response_start:]
@@ -218,7 +218,7 @@ class GSPOTrainer:
                     
                     if response_logits.size(1) == 0:
                         self.logger.warning("Empty response for log prob computation")
-                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                        return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
                     
                     # Compute log probabilities with numerical stability
                     log_probs = F.log_softmax(response_logits, dim=-1)
@@ -226,7 +226,7 @@ class GSPOTrainer:
                     # Check for NaN/Inf in log_probs
                     if torch.isnan(log_probs).any() or torch.isinf(log_probs).any():
                         self.logger.warning("NaN/Inf in log_probs")
-                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                        return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
                     
                     # Gather log probabilities for actual tokens
                     token_log_probs = log_probs.gather(
@@ -245,7 +245,7 @@ class GSPOTrainer:
                         available_mask_len = attention_mask.size(1) - response_mask_start
                         if available_mask_len <= 0:
                             self.logger.warning("No valid response mask")
-                            return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                            return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
                         
                         response_mask = attention_mask[:, response_mask_start:response_mask_start + available_mask_len]
                         token_log_probs = token_log_probs[:, :available_mask_len]
@@ -254,7 +254,7 @@ class GSPOTrainer:
                     min_len = min(response_mask.shape[1], token_log_probs.shape[1])
                     if min_len <= 0:
                         self.logger.warning("No valid tokens for log prob computation")
-                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                        return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
                     
                     response_mask = response_mask[:, :min_len]
                     token_log_probs = token_log_probs[:, :min_len]
@@ -263,18 +263,18 @@ class GSPOTrainer:
                     masked_log_probs = token_log_probs * response_mask
                     sequence_log_prob = masked_log_probs.sum(dim=-1)
                     
-                    # Final stability check
-                    sequence_log_prob = torch.clamp(sequence_log_prob, min=-50.0, max=10.0)
+                    # Final stability check - Use less aggressive clamping to allow model differences
+                    sequence_log_prob = torch.clamp(sequence_log_prob, min=-200.0, max=10.0)
                     
                     if torch.isnan(sequence_log_prob).any() or torch.isinf(sequence_log_prob).any():
                         self.logger.warning("NaN/Inf in final sequence log prob")
-                        return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                        return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
                     
                     return sequence_log_prob
                     
             except Exception as e:
                 self.logger.warning(f"Error in log prob computation: {e}")
-                return torch.tensor(-10.0, device=self.device, dtype=torch.float32)
+                return torch.tensor(-30.0, device=self.device, dtype=torch.float32)
         
         if requires_grad:
             return _compute_log_prob()
