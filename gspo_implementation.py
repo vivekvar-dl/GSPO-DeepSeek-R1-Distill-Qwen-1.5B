@@ -43,6 +43,14 @@ class GSPOTrainer:
         self.config = config
         self.device = device
         
+        # Ensure model is on correct device and in training mode
+        self.model.to(self.device)
+        self.model.train()
+        
+        # Ensure model parameters require gradients
+        for param in self.model.parameters():
+            param.requires_grad_(True)
+        
         # Store old model for importance ratio computation
         self.old_model = None
         self.update_old_model()
@@ -101,7 +109,15 @@ class GSPOTrainer:
             ).squeeze(-1)
             
             # Sum over sequence length to get sequence log probability
-            sequence_log_prob = token_log_probs.sum(dim=-1)
+            # Apply attention mask to ignore padded tokens
+            response_mask = attention_mask[:, response_start_idx+1:response_start_idx+1+token_log_probs.shape[1]]
+            if response_mask.shape[1] != token_log_probs.shape[1]:
+                # Adjust mask size if needed
+                min_len = min(response_mask.shape[1], token_log_probs.shape[1])
+                response_mask = response_mask[:, :min_len]
+                token_log_probs = token_log_probs[:, :min_len]
+            
+            sequence_log_prob = (token_log_probs * response_mask).sum(dim=-1)
             
         return sequence_log_prob
     
@@ -289,9 +305,28 @@ class GSPOTrainer:
         # Convert to tensors
         rewards_tensor = torch.tensor(all_rewards, device=self.device, dtype=torch.float)
         
-        # Batch the input data
-        input_ids = torch.stack([item['input_ids'] for item in all_input_data])
-        attention_mask = torch.stack([item['attention_mask'] for item in all_input_data])
+        # Pad sequences to same length for batching
+        max_length = max(item['input_ids'].size(0) for item in all_input_data)
+        
+        padded_input_ids = []
+        padded_attention_mask = []
+        
+        for item in all_input_data:
+            input_ids = item['input_ids']
+            attention_mask = item['attention_mask']
+            
+            # Pad to max_length
+            pad_length = max_length - input_ids.size(0)
+            if pad_length > 0:
+                input_ids = F.pad(input_ids, (0, pad_length), value=self.tokenizer.pad_token_id)
+                attention_mask = F.pad(attention_mask, (0, pad_length), value=0)
+            
+            padded_input_ids.append(input_ids)
+            padded_attention_mask.append(attention_mask)
+        
+        # Stack padded tensors
+        input_ids = torch.stack(padded_input_ids)
+        attention_mask = torch.stack(padded_attention_mask)
         response_lengths = torch.tensor(
             [item['response_length'] for item in all_input_data],
             device=self.device,

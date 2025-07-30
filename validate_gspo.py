@@ -24,13 +24,18 @@ class GSPOValidator:
     def __init__(self, model_name: str = "microsoft/DialoGPT-small"):
         self.model_name = model_name
         self.results = {}
-        # Force CPU for validation to avoid device issues
-        self.device = "cpu" 
+        # Use CUDA if available (H100), otherwise CPU
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
     def load_small_model(self):
         """Load a small model for fast validation"""
         print(f"Loading small model for validation: {self.model_name}")
         print(f"Using device: {self.device}")
+        
+        if self.device == "cuda":
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+            print(f"GPU: {gpu_name} ({gpu_memory:.1f} GB)")
         
         tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         model = AutoModelForCausalLM.from_pretrained(self.model_name)
