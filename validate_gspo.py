@@ -72,7 +72,7 @@ class GSPOValidator:
             # Ensure inputs are on correct device
             test_input = {k: v.to(self.device) for k, v in test_input.items()}
             log_prob = trainer.compute_sequence_log_prob(
-                model, test_input['input_ids'], test_input['attention_mask'], 0
+                model, test_input['input_ids'], test_input['attention_mask'], 0, requires_grad=False
             )
             assert torch.is_tensor(log_prob), "Should return tensor"
             results["sequence_log_prob"] = "PASS"

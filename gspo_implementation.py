@@ -6,7 +6,14 @@ from typing import List, Dict, Tuple, Optional
 import logging
 from dataclasses import dataclass
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import wandb
+
+# Optional wandb import
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    wandb = None
 
 @dataclass
 class GSPOConfig:
@@ -84,10 +91,12 @@ class GSPOTrainer:
         model: torch.nn.Module, 
         input_ids: torch.Tensor, 
         attention_mask: torch.Tensor,
-        response_start_idx: int
+        response_start_idx: int,
+        requires_grad: bool = False
     ) -> torch.Tensor:
         """Compute log probability of sequence y given x"""
-        with torch.no_grad():
+        
+        def _compute_log_prob():
             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
             logits = outputs.logits
             
@@ -108,7 +117,6 @@ class GSPOTrainer:
                 index=response_labels.unsqueeze(-1)
             ).squeeze(-1)
             
-            # Sum over sequence length to get sequence log probability
             # Apply attention mask to ignore padded tokens
             response_mask = attention_mask[:, response_start_idx+1:response_start_idx+1+token_log_probs.shape[1]]
             if response_mask.shape[1] != token_log_probs.shape[1]:
@@ -118,8 +126,13 @@ class GSPOTrainer:
                 token_log_probs = token_log_probs[:, :min_len]
             
             sequence_log_prob = (token_log_probs * response_mask).sum(dim=-1)
-            
-        return sequence_log_prob
+            return sequence_log_prob
+        
+        if requires_grad:
+            return _compute_log_prob()
+        else:
+            with torch.no_grad():
+                return _compute_log_prob()
     
     def compute_importance_ratio(
         self,
@@ -131,11 +144,13 @@ class GSPOTrainer:
         """Compute GSPO sequence-level importance ratio s_i(θ)"""
         
         # Compute sequence log probabilities under current and old policies
+        # Current model needs gradients for backprop
         current_log_prob = self.compute_sequence_log_prob(
-            self.model, input_ids, attention_mask, response_start_idx
+            self.model, input_ids, attention_mask, response_start_idx, requires_grad=True
         )
+        # Old model doesn't need gradients
         old_log_prob = self.compute_sequence_log_prob(
-            self.old_model, input_ids, attention_mask, response_start_idx
+            self.old_model, input_ids, attention_mask, response_start_idx, requires_grad=False
         )
         
         # Compute length-normalized importance ratio
@@ -355,7 +370,8 @@ class GSPOTrainer:
         if self.step % self.config.log_frequency == 0:
             self.logger.info(f"Step {self.step}: {stats}")
             # Optionally log to wandb
-            # wandb.log(stats, step=self.step)
+            if WANDB_AVAILABLE and wandb.run is not None:
+                wandb.log(stats, step=self.step)
         
         return stats
 
