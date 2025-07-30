@@ -218,8 +218,29 @@ class GSPOTrainer:
         batch_size = rewards.size(0)
         group_size = self.config.group_size
         
+        # Handle case where batch size is smaller than group size
+        if batch_size < group_size:
+            # Just normalize the rewards without grouping
+            reward_mean = rewards.mean()
+            reward_std = rewards.std() + 1e-8
+            advantages = (rewards - reward_mean) / reward_std
+            return advantages
+        
+        # Ensure batch size is divisible by group size
+        num_complete_groups = batch_size // group_size
+        if num_complete_groups == 0:
+            # Fallback to simple normalization
+            reward_mean = rewards.mean()
+            reward_std = rewards.std() + 1e-8
+            advantages = (rewards - reward_mean) / reward_std
+            return advantages
+        
+        # Take only complete groups
+        complete_batch_size = num_complete_groups * group_size
+        rewards_subset = rewards[:complete_batch_size]
+        
         # Reshape to group format
-        grouped_rewards = rewards.view(-1, group_size)
+        grouped_rewards = rewards_subset.view(-1, group_size)
         
         # Compute group statistics
         group_means = grouped_rewards.mean(dim=1, keepdim=True)
@@ -229,7 +250,17 @@ class GSPOTrainer:
         advantages = (grouped_rewards - group_means) / group_stds
         
         # Reshape back to original format
-        advantages = advantages.view(batch_size)
+        advantages = advantages.view(complete_batch_size)
+        
+        # If we had incomplete groups, handle remaining rewards
+        if complete_batch_size < batch_size:
+            remaining_rewards = rewards[complete_batch_size:]
+            remaining_mean = remaining_rewards.mean()
+            remaining_std = remaining_rewards.std() + 1e-8
+            remaining_advantages = (remaining_rewards - remaining_mean) / remaining_std
+            
+            # Concatenate
+            advantages = torch.cat([advantages, remaining_advantages])
         
         return advantages
     
