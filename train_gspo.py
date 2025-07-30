@@ -11,7 +11,6 @@ import sys
 import argparse
 import json
 import torch
-import wandb
 from datetime import datetime
 from pathlib import Path
 from transformers import (
@@ -21,13 +20,21 @@ from transformers import (
     set_seed
 )
 
+# Make wandb optional
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    wandb = None
+
 # Import our GSPO implementation
 from gspo_implementation import GSPOTrainer, GSPOConfig
 from data_loader import DatasetLoader, create_reward_evaluator
 
 def setup_logging(config):
     """Setup wandb logging if enabled"""
-    if config.use_wandb:
+    if hasattr(config, 'use_wandb') and config.use_wandb and WANDB_AVAILABLE:
         wandb.init(
             project="gspo-training",
             name=f"gspo-{config.model_name.split('/')[-1]}-{datetime.now().strftime('%Y%m%d_%H%M%S')}",
@@ -38,25 +45,27 @@ def load_model_and_tokenizer(model_name: str, device: str = "cuda"):
     """Load model and tokenizer with appropriate configuration for H100"""
     print(f"Loading model: {model_name}")
     
-    # Check GPU memory and adjust accordingly
+    # Memory optimization settings
+    torch.cuda.empty_cache()
     if torch.cuda.is_available():
         gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
         print(f"GPU Memory: {gpu_memory:.1f} GB")
+        
+        # Set memory fraction to leave room for optimizer states
+        torch.cuda.set_per_process_memory_fraction(0.85)
     
-    # Model loading configuration based on size
+    # Model loading configuration based on size with memory optimization
     if "7B" in model_name or "8B" in model_name:
-        torch_dtype = torch.float16
+        torch_dtype = torch.bfloat16  # More memory efficient than float16
         device_map = "auto"
     elif "14B" in model_name or "13B" in model_name:
-        torch_dtype = torch.float16
-        device_map = "auto"
+        torch_dtype = torch.bfloat16
+        device_map = "auto" 
     elif "30B" in model_name:
-        # For 30B models, might need more careful memory management
-        torch_dtype = torch.float16
+        torch_dtype = torch.bfloat16
         device_map = "auto"
     else:
-        # Default configuration
-        torch_dtype = torch.float16
+        torch_dtype = torch.bfloat16
         device_map = "auto"
     
     try:
@@ -72,7 +81,9 @@ def load_model_and_tokenizer(model_name: str, device: str = "cuda"):
                 torch_dtype=torch_dtype,
                 device_map=device_map,
                 trust_remote_code=True,
-                attn_implementation="flash_attention_2"
+                attn_implementation="flash_attention_2",
+                low_cpu_mem_usage=True,
+                use_cache=False  # Disable KV cache to save memory during training
             )
             print("✓ Using FlashAttention2 for optimization")
         except Exception as fa_error:
@@ -82,9 +93,16 @@ def load_model_and_tokenizer(model_name: str, device: str = "cuda"):
                 model_name,
                 torch_dtype=torch_dtype,
                 device_map=device_map,
-                trust_remote_code=True
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+                use_cache=False
             )
             print("✓ Model loaded successfully without FlashAttention2")
+        
+        # Enable gradient checkpointing for memory efficiency
+        if hasattr(model, 'gradient_checkpointing_enable'):
+            model.gradient_checkpointing_enable()
+            print("✓ Gradient checkpointing enabled")
         
         # Add pad token if not present
         if tokenizer.pad_token is None:
@@ -93,6 +111,9 @@ def load_model_and_tokenizer(model_name: str, device: str = "cuda"):
         
         print(f"Model loaded successfully!")
         print(f"Model parameters: {model.num_parameters() / 1e9:.2f}B")
+        
+        # Clear cache after loading
+        torch.cuda.empty_cache()
         
         return model, tokenizer
         
@@ -104,18 +125,18 @@ def load_model_and_tokenizer(model_name: str, device: str = "cuda"):
         return load_model_and_tokenizer(fallback_model, device)
 
 def create_training_config(args):
-    """Create GSPO training configuration"""
+    """Create GSPO training configuration with memory optimizations"""
     return GSPOConfig(
         # Core GSPO parameters - from paper
         left_clip_range=args.left_clip_range,
         right_clip_range=args.right_clip_range,
-        group_size=args.group_size,
+        group_size=min(args.group_size, 2),  # Reduce group size for memory
         
-        # Training parameters
+        # Training parameters - memory optimized
         learning_rate=args.learning_rate,
-        batch_size=args.batch_size,
-        mini_batch_size=args.mini_batch_size,
-        max_length=args.max_length,
+        batch_size=min(args.batch_size, 2),  # Reduce batch size for memory
+        mini_batch_size=1,  # Force mini batch size to 1
+        max_length=min(args.max_length, 512),  # Limit sequence length
         
         # Logging
         log_frequency=args.log_frequency,
@@ -305,7 +326,7 @@ def main():
             epoch_stats.append(stats)
             
             # Log to wandb if enabled
-            if args.use_wandb:
+            if args.use_wandb and WANDB_AVAILABLE:
                 wandb.log({
                     "train/loss": stats["loss"],
                     "train/clip_fraction": stats["clip_fraction"],
@@ -319,7 +340,7 @@ def main():
             if trainer.step % args.eval_frequency == 0:
                 eval_reward = evaluate_model(trainer, eval_data, reward_function)
                 
-                if args.use_wandb:
+                if args.use_wandb and WANDB_AVAILABLE:
                     wandb.log({"eval/reward": eval_reward, "step": trainer.step})
                 
                 # Save best model
@@ -329,6 +350,10 @@ def main():
                     model.save_pretrained(checkpoint_path)
                     tokenizer.save_pretrained(checkpoint_path)
                     print(f"New best model saved! Reward: {eval_reward:.3f}")
+            
+            # Clear GPU cache periodically
+            if trainer.step % 5 == 0:
+                torch.cuda.empty_cache()
         
         # Update old model periodically
         if (epoch + 1) % args.update_frequency == 0:
@@ -383,7 +408,7 @@ def main():
     print(f"Improvement: {final_reward - initial_reward:.3f}")
     print(f"Models saved to: {args.output_dir}")
     
-    if args.use_wandb:
+    if args.use_wandb and WANDB_AVAILABLE:
         wandb.log({
             "final/initial_reward": initial_reward,
             "final/final_reward": final_reward,
@@ -391,6 +416,9 @@ def main():
             "final/improvement": final_reward - initial_reward
         })
         wandb.finish()
+    
+    # Final cleanup
+    torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     main() 

@@ -75,16 +75,22 @@ class GSPOTrainer:
     
     def update_old_model(self):
         """Update the old model (π_θ_old) for importance ratio computation"""
-        if self.old_model is None:
-            # Create a copy of the model
-            self.old_model = type(self.model)(self.model.config)
-            self.old_model.load_state_dict(self.model.state_dict())
-        else:
-            # Update the old model with current model weights
-            self.old_model.load_state_dict(self.model.state_dict())
+        
+        # Clear old model from memory first
+        if self.old_model is not None:
+            del self.old_model
+            torch.cuda.empty_cache()
+        
+        # Create a copy of the model
+        self.old_model = type(self.model)(self.model.config)
+        self.old_model.load_state_dict(self.model.state_dict())
         
         self.old_model.to(self.device)
         self.old_model.eval()
+        
+        # Freeze old model parameters to save memory
+        for param in self.old_model.parameters():
+            param.requires_grad_(False)
     
     def compute_sequence_log_prob(
         self, 
@@ -307,7 +313,7 @@ class GSPOTrainer:
         queries: List[str],
         reward_function: callable
     ) -> Dict[str, float]:
-        """Single GSPO training step"""
+        """Single GSPO training step with memory optimization"""
         
         # Generate multiple responses per query (group size)
         all_responses = []
@@ -318,7 +324,7 @@ class GSPOTrainer:
             # Generate G responses for this query
             responses = self.generate_responses(
                 [query] * self.config.group_size,
-                max_new_tokens=256
+                max_new_tokens=128  # Reduced token length for memory
             )
             
             # Compute rewards for responses
@@ -385,6 +391,9 @@ class GSPOTrainer:
         # Assume same response_start_idx for simplicity (can be generalized)
         response_start_idx = all_input_data[0]['response_start_idx']
         
+        # Clear intermediate variables to save memory
+        del all_input_data, padded_input_ids, padded_attention_mask
+        
         # Compute loss
         self.model.train()
         loss, stats = self.gspo_loss(
@@ -392,10 +401,25 @@ class GSPOTrainer:
             response_start_idx, response_lengths
         )
         
-        # Backward pass
+        # Skip step if loss is problematic
+        if torch.isnan(loss) or torch.isinf(loss) or loss.item() == 0.0:
+            self.logger.warning("Skipping step due to problematic loss")
+            torch.cuda.empty_cache()
+            return {
+                "loss": 0.0, "clip_fraction": 0.0, "importance_ratio_mean": 1.0,
+                "importance_ratio_std": 0.0, "advantage_mean": 0.0, 
+                "advantage_std": 0.0, "reward_mean": rewards_tensor.mean().item()
+            }
+        
+        # Backward pass with gradient scaling for stability
         self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        
+        # Scale loss to prevent gradient explosion
+        scaled_loss = loss / 10.0
+        scaled_loss.backward()
+        
+        # Gradient clipping for stability
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
         self.optimizer.step()
         
         self.step += 1
@@ -403,9 +427,11 @@ class GSPOTrainer:
         # Log statistics
         if self.step % self.config.log_frequency == 0:
             self.logger.info(f"Step {self.step}: {stats}")
-            # Optionally log to wandb
             if WANDB_AVAILABLE and wandb.run is not None:
                 wandb.log(stats, step=self.step)
+        
+        # Clear cache to free memory
+        torch.cuda.empty_cache()
         
         return stats
 
