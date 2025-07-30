@@ -183,16 +183,16 @@ def main():
                        help="HuggingFace model name")
     parser.add_argument("--device", type=str, default="cuda", help="Device to use")
     
-    # GSPO parameters (from paper)
-    parser.add_argument("--left_clip_range", type=float, default=3e-4,
+    # GSPO parameters (from paper) - OPTIMIZED FOR TARGET PERFORMANCE
+    parser.add_argument("--left_clip_range", type=float, default=2e-3,
                        help="Left clipping range for GSPO")
-    parser.add_argument("--right_clip_range", type=float, default=4e-4,
+    parser.add_argument("--right_clip_range", type=float, default=2e-3,
                        help="Right clipping range for GSPO")
     parser.add_argument("--group_size", type=int, default=4,
                        help="Group size G for GSPO")
     
-    # Training parameters
-    parser.add_argument("--learning_rate", type=float, default=1e-6,
+    # Training parameters - OPTIMIZED FOR STABILITY
+    parser.add_argument("--learning_rate", type=float, default=5e-8,
                        help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=4,
                        help="Batch size (number of queries per step)")
@@ -202,7 +202,7 @@ def main():
                        help="Maximum sequence length")
     parser.add_argument("--num_epochs", type=int, default=5,
                        help="Number of training epochs")
-    parser.add_argument("--update_frequency", type=int, default=5,
+    parser.add_argument("--update_frequency", type=int, default=1,
                        help="How often to update old model")
     
     # Dataset parameters
