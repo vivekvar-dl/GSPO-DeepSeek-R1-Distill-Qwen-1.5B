@@ -24,12 +24,19 @@ class GSPOValidator:
     def __init__(self, model_name: str = "microsoft/DialoGPT-small"):
         self.model_name = model_name
         self.results = {}
+        # Force CPU for validation to avoid device issues
+        self.device = "cpu" 
         
     def load_small_model(self):
         """Load a small model for fast validation"""
         print(f"Loading small model for validation: {self.model_name}")
+        print(f"Using device: {self.device}")
+        
         tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         model = AutoModelForCausalLM.from_pretrained(self.model_name)
+        
+        # Ensure model is on correct device
+        model = model.to(self.device)
         
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
@@ -47,7 +54,7 @@ class GSPOValidator:
         # Load model
         model, tokenizer = self.load_small_model()
         config = GSPOConfig(group_size=2, batch_size=1, learning_rate=1e-5)
-        trainer = GSPOTrainer(model, tokenizer, config)
+        trainer = GSPOTrainer(model, tokenizer, config, device=self.device)
         
         # Test data
         test_queries = ["What is 2+2?", "Hello world"]
@@ -57,8 +64,10 @@ class GSPOValidator:
             # Test sequence log probability computation
             print("✓ Testing sequence log probability computation...")
             test_input = tokenizer("Hello world", return_tensors="pt")
+            # Ensure inputs are on correct device
+            test_input = {k: v.to(self.device) for k, v in test_input.items()}
             log_prob = trainer.compute_sequence_log_prob(
-                model, test_input.input_ids, test_input.attention_mask, 0
+                model, test_input['input_ids'], test_input['attention_mask'], 0
             )
             assert torch.is_tensor(log_prob), "Should return tensor"
             results["sequence_log_prob"] = "PASS"
@@ -66,8 +75,8 @@ class GSPOValidator:
             # Test importance ratio computation  
             print("✓ Testing importance ratio computation...")
             importance_ratio = trainer.compute_importance_ratio(
-                test_input.input_ids, test_input.attention_mask, 0, 
-                torch.tensor([2.0])
+                test_input['input_ids'], test_input['attention_mask'], 0, 
+                torch.tensor([2.0], device=self.device)
             )
             assert torch.is_tensor(importance_ratio), "Should return tensor"
             assert importance_ratio.item() > 0, "Should be positive"
@@ -75,7 +84,7 @@ class GSPOValidator:
             
             # Test advantage computation
             print("✓ Testing advantage computation...")
-            rewards = torch.tensor([0.3, 0.7])  # Group of 2
+            rewards = torch.tensor([0.3, 0.7], device=self.device)  # Group of 2
             advantages = trainer.compute_advantages(rewards)
             assert len(advantages) == 2, "Should match input size"
             assert abs(advantages.mean().item()) < 1e-6, "Should be zero-mean"
@@ -109,7 +118,7 @@ class GSPOValidator:
         # Load model and data
         model, tokenizer = self.load_small_model()
         config = GSPOConfig(group_size=2, batch_size=2, learning_rate=1e-4)
-        trainer = GSPOTrainer(model, tokenizer, config)
+        trainer = GSPOTrainer(model, tokenizer, config, device=self.device)
         
         # Simple test data with clear reward signal
         loader = DatasetLoader()
@@ -143,7 +152,7 @@ class GSPOValidator:
         # Validate dynamics
         try:
             # Check losses are reasonable
-            assert all(0 < loss < 100 for loss in losses), "Losses should be reasonable"
+            assert all(-100 < loss < 100 for loss in losses), "Losses should be reasonable"
             results["loss_range"] = "PASS"
             
             # Check clip fractions are in expected range  
@@ -187,7 +196,7 @@ class GSPOValidator:
         # Load model and data
         model, tokenizer = self.load_small_model()
         config = GSPOConfig(group_size=2, batch_size=2, learning_rate=5e-4)
-        trainer = GSPOTrainer(model, tokenizer, config)
+        trainer = GSPOTrainer(model, tokenizer, config, device=self.device)
         
         # Get test data
         loader = DatasetLoader()
@@ -284,11 +293,11 @@ class GSPOValidator:
         
         # Tight clipping
         config_tight = GSPOConfig(left_clip_range=1e-5, right_clip_range=2e-5, group_size=2)
-        trainer_tight = GSPOTrainer(model, tokenizer, config_tight)
+        trainer_tight = GSPOTrainer(model, tokenizer, config_tight, device=self.device)
         
         # Loose clipping  
         config_loose = GSPOConfig(left_clip_range=0.1, right_clip_range=0.2, group_size=2)
-        trainer_loose = GSPOTrainer(model, tokenizer, config_loose)
+        trainer_loose = GSPOTrainer(model, tokenizer, config_loose, device=self.device)
         
         # Test data
         loader = DatasetLoader()

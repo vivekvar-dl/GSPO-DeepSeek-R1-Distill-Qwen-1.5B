@@ -1,0 +1,9 @@
+torch>=2.0.0
+transformers>=4.35.0
+accelerate>=0.24.0
+numpy>=1.24.0
+tqdm>=4.65.0
+matplotlib>=3.7.0
+
+# Essential only - no datasets package for now to avoid PyArrow
+# We'll install datasets separately if needed 
