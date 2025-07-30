@@ -39,8 +39,9 @@ def load_model_and_tokenizer(model_name: str, device: str = "cuda"):
     print(f"Loading model: {model_name}")
     
     # Check GPU memory and adjust accordingly
-    gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-    print(f"GPU Memory: {gpu_memory:.1f} GB")
+    if torch.cuda.is_available():
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f"GPU Memory: {gpu_memory:.1f} GB")
     
     # Model loading configuration based on size
     if "7B" in model_name or "8B" in model_name:
@@ -64,13 +65,26 @@ def load_model_and_tokenizer(model_name: str, device: str = "cuda"):
             trust_remote_code=True
         )
         
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            trust_remote_code=True,
-            attn_implementation="flash_attention_2"  # Use Flash Attention if available
-        )
+        # Try with FlashAttention2 first, fall back if not available
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch_dtype,
+                device_map=device_map,
+                trust_remote_code=True,
+                attn_implementation="flash_attention_2"
+            )
+            print("✓ Using FlashAttention2 for optimization")
+        except Exception as fa_error:
+            print(f"FlashAttention2 not available: {fa_error}")
+            print("Loading without FlashAttention2...")
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch_dtype,
+                device_map=device_map,
+                trust_remote_code=True
+            )
+            print("✓ Model loaded successfully without FlashAttention2")
         
         # Add pad token if not present
         if tokenizer.pad_token is None:
