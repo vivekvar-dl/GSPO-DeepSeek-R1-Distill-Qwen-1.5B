@@ -1,0 +1,45 @@
+{
+  "os":  "Linux-6.8.0-1031-azure-x86_64-with-glibc2.35",
+  "python":  "CPython 3.10.12",
+  "startedAt":  "2025-07-31T05:02:45.525827Z",
+  "args":  [
+    "--model_name",
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+    "--use_wandb"
+  ],
+  "program":  "/home/azureuser/gpso/train_custom_gspo.py",
+  "codePath":  "train_custom_gspo.py",
+  "codePathLocal":  "train_custom_gspo.py",
+  "git":  {
+    "remote":  "https://github.com/vivekvar-dl/gpso.git",
+    "commit":  "d1a42dc9558ab5451b48a1492a74f806417e9c22"
+  },
+  "email":  "domainluther1234@gmail.com",
+  "root":  "/home/azureuser/gpso",
+  "host":  "vivek22",
+  "executable":  "/home/azureuser/gpso/myenv/bin/python",
+  "cpu_count":  40,
+  "cpu_count_logical":  40,
+  "gpu":  "NVIDIA H100 NVL",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "266206101504",
+      "used":  "186238664704"
+    }
+  },
+  "memory":  {
+    "total":  "337898176512"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA H100 NVL",
+      "memoryTotal":  "100485038080",
+      "cudaCores":  16896,
+      "architecture":  "Hopper",
+      "uuid":  "GPU-8f343f96-d9d0-2be5-c0eb-73e8c6d74144"
+    }
+  ],
+  "cudaVersion":  "12.2",
+  "writerId":  "iakt0nlrpfa7xb52not3560ac7winrs3"
+}

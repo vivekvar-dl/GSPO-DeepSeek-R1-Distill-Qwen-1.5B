@@ -1,0 +1,125 @@
+_wandb:
+    value:
+        cli_version: 0.21.0
+        e:
+            r7k82ko82l1ztp9j5u3ipd0wkl292io4:
+                args:
+                    - --model_name
+                    - Qwen/Qwen2.5-7B-Instruct
+                    - --dataset
+                    - math
+                    - --num_train_samples
+                    - "200"
+                    - --num_epochs
+                    - "3"
+                    - --batch_size
+                    - "2"
+                    - --group_size
+                    - "4"
+                    - --learning_rate
+                    - "3e-6"
+                    - --max_length
+                    - "512"
+                    - --output_dir
+                    - ./gspo_math_focused
+                    - --eval_frequency
+                    - "25"
+                    - --use_wandb
+                codePath: train_gspo.py
+                codePathLocal: train_gspo.py
+                cpu_count: 40
+                cpu_count_logical: 40
+                cudaVersion: "12.2"
+                disk:
+                    /:
+                        total: "266206101504"
+                        used: "223742312448"
+                email: domainluther1234@gmail.com
+                executable: /home/azureuser/gpso/myenv/bin/python
+                git:
+                    commit: 244a4e06becdd5311b1bcc92a0788a3d212264c6
+                    remote: https://github.com/vivekvar-dl/gpso.git
+                gpu: NVIDIA H100 NVL
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Hopper
+                      cudaCores: 16896
+                      memoryTotal: "100485038080"
+                      name: NVIDIA H100 NVL
+                      uuid: GPU-7dc35db7-a05d-b3bb-12bb-d55bfe97f077
+                host: vivek22
+                memory:
+                    total: "337898180608"
+                os: Linux-6.8.0-1031-azure-x86_64-with-glibc2.35
+                program: /home/azureuser/gpso/train_gspo.py
+                python: CPython 3.10.12
+                root: /home/azureuser/gpso
+                startedAt: "2025-07-30T12:28:33.680606Z"
+                writerId: r7k82ko82l1ztp9j5u3ipd0wkl292io4
+        m: []
+        python_version: 3.10.12
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 51
+                - 53
+                - 71
+            "2":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 51
+                - 53
+                - 71
+            "3":
+                - 2
+                - 13
+                - 16
+                - 61
+            "4": 3.10.12
+            "5": 0.21.0
+            "6": 4.54.1
+            "12": 0.21.0
+            "13": linux-x86_64
+batch_size:
+    value: 2
+dataset:
+    value: math
+device:
+    value: cuda
+eval_frequency:
+    value: 25
+group_size:
+    value: 4
+learning_rate:
+    value: 3e-06
+left_clip_range:
+    value: 0.0003
+log_frequency:
+    value: 5
+max_length:
+    value: 512
+mini_batch_size:
+    value: 1
+model_name:
+    value: Qwen/Qwen2.5-7B-Instruct
+num_epochs:
+    value: 3
+num_eval_samples:
+    value: 20
+num_train_samples:
+    value: 200
+output_dir:
+    value: ./gspo_math_focused
+right_clip_range:
+    value: 0.0004
+seed:
+    value: 42
+update_frequency:
+    value: 5
+use_wandb:
+    value: true

@@ -1,0 +1,42 @@
+{
+  "args": {
+    "model_name": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+    "learning_rate": 2e-07,
+    "left_clip_range": 0.003,
+    "right_clip_range": 0.003,
+    "group_size": 4,
+    "batch_size": 2,
+    "update_frequency": 1,
+    "num_epochs": 3,
+    "max_length": 512,
+    "output_dir": "./custom_gspo_results",
+    "use_wandb": true,
+    "seed": 42
+  },
+  "initial_reward": 0.7669999999999998,
+  "initial_accuracy": 0.35,
+  "final_reward": 0.8309999999999997,
+  "final_accuracy": 0.5,
+  "best_reward": 0.8464999999999998,
+  "improvement": 0.06399999999999995,
+  "training_stats": [
+    {
+      "epoch": 1,
+      "avg_loss": 0.0006315526366233826,
+      "avg_clip_fraction": 0.5975,
+      "avg_reward": 0.676924995571375
+    },
+    {
+      "epoch": 2,
+      "avg_loss": 0.0006708024442195892,
+      "avg_clip_fraction": 0.55,
+      "avg_reward": 0.661274994111061
+    },
+    {
+      "epoch": 3,
+      "avg_loss": 0.0008430236577987671,
+      "avg_clip_fraction": 0.5125,
+      "avg_reward": 0.6836999981105327
+    }
+  ]
+}

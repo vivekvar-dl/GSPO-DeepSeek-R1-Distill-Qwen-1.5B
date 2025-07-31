@@ -1,0 +1,58 @@
+{
+  "technical": {
+    "sequence_log_prob": "PASS",
+    "importance_ratio": "PASS",
+    "advantages": "PASS",
+    "training_step": "PASS"
+  },
+  "training_dynamics": {
+    "results": {
+      "loss_range": "PASS",
+      "clip_fraction_range": "PASS",
+      "importance_ratio_positive": "PASS",
+      "model_updating": "PASS"
+    },
+    "losses": [
+      0.24940860271453857,
+      1.5861467123031616,
+      0.2831198573112488,
+      0.14997558295726776,
+      0.9760568141937256
+    ],
+    "clip_fractions": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "importance_ratios": [
+      0.24463602900505066,
+      2.557800531387329,
+      0.25607365369796753,
+      0.6470345854759216,
+      1.8556662797927856
+    ]
+  },
+  "performance": {
+    "results": {
+      "improvement": "PASS - Stable (no significant degradation)",
+      "response_quality": "PASS"
+    },
+    "initial_avg": 0.18322187768402753,
+    "final_avg": 0.16126868101852562,
+    "improvement": -0.02195319666550191,
+    "initial_rewards": [
+      0.21394267984578838,
+      0.15250107552226672
+    ],
+    "final_rewards": [
+      0.15265359696838637,
+      0.16988376506866487
+    ]
+  },
+  "clipping": {
+    "clipping_comparison": "WARN - Expected more clipping with tight range",
+    "clip_fraction_range": "PASS"
+  }
+}

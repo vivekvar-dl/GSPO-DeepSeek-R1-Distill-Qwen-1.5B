@@ -1,0 +1,36 @@
+# Virtual environments
+myenv/
+venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Model files (too large for GitHub)
+robust_gspo_results/
+*.tar.gz
+*.zip
+
+# Logs and temporary files
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# Wandb cache (keep logs but not cache)
+wandb/offline-*
+wandb/cache/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Large data files
+*.bin
+*.safetensors
+*.pt
+*.pth

@@ -1,0 +1,30 @@
+{
+  "trained_model_results": {
+    "Math": {
+      "average_reward": 0.4570385591283282,
+      "rewards": [
+        0.2916451717450531,
+        0.2710332709121132,
+        0.8084372347278183
+      ]
+    },
+    "Reasoning": {
+      "average_reward": 0.46666666666666673,
+      "rewards": [
+        0.3,
+        0.8,
+        0.3
+      ]
+    },
+    "Code": {
+      "average_reward": 0.6968756067361003,
+      "rewards": [
+        0.716534112982648,
+        0.6762550063213044,
+        0.6978377009043483
+      ]
+    },
+    "overall_average": 0.5401936108436983
+  },
+  "model_path": "gspo_outputs/best_model"
+}

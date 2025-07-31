@@ -1,0 +1,119 @@
+_wandb:
+    value:
+        cli_version: 0.21.0
+        e:
+            j9zee1qk7jtrkmkxo93rb8gxaz2ubor2:
+                args:
+                    - --dataset
+                    - gsm8k
+                    - --num_train_samples
+                    - "500"
+                    - --num_epochs
+                    - "3"
+                    - --batch_size
+                    - "2"
+                    - --group_size
+                    - "4"
+                    - --learning_rate
+                    - "1e-6"
+                    - --max_length
+                    - "512"
+                    - --output_dir
+                    - ./gspo_fixed
+                    - --use_wandb
+                codePath: train_gspo.py
+                codePathLocal: train_gspo.py
+                cpu_count: 40
+                cpu_count_logical: 40
+                cudaVersion: "12.2"
+                disk:
+                    /:
+                        total: "266206101504"
+                        used: "239004233728"
+                email: domainluther1234@gmail.com
+                executable: /home/azureuser/gpso/myenv/bin/python
+                git:
+                    commit: 4c372a7b7a2ae8386536050374f6f3de669f552b
+                    remote: https://github.com/vivekvar-dl/gpso.git
+                gpu: NVIDIA H100 NVL
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Hopper
+                      cudaCores: 16896
+                      memoryTotal: "100485038080"
+                      name: NVIDIA H100 NVL
+                      uuid: GPU-7dc35db7-a05d-b3bb-12bb-d55bfe97f077
+                host: vivek22
+                memory:
+                    total: "337898180608"
+                os: Linux-6.8.0-1031-azure-x86_64-with-glibc2.35
+                program: /home/azureuser/gpso/train_gspo.py
+                python: CPython 3.10.12
+                root: /home/azureuser/gpso
+                startedAt: "2025-07-30T14:26:08.317281Z"
+                writerId: j9zee1qk7jtrkmkxo93rb8gxaz2ubor2
+        m: []
+        python_version: 3.10.12
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 51
+                - 53
+                - 71
+            "2":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 51
+                - 53
+                - 71
+            "3":
+                - 13
+                - 16
+            "4": 3.10.12
+            "5": 0.21.0
+            "6": 4.54.1
+            "12": 0.21.0
+            "13": linux-x86_64
+batch_size:
+    value: 2
+dataset:
+    value: gsm8k
+device:
+    value: cuda
+eval_frequency:
+    value: 20
+group_size:
+    value: 4
+learning_rate:
+    value: 1e-06
+left_clip_range:
+    value: 0.0003
+log_frequency:
+    value: 5
+max_length:
+    value: 512
+mini_batch_size:
+    value: 1
+model_name:
+    value: Qwen/Qwen2.5-7B-Instruct
+num_epochs:
+    value: 3
+num_eval_samples:
+    value: 20
+num_train_samples:
+    value: 500
+output_dir:
+    value: ./gspo_fixed
+right_clip_range:
+    value: 0.0004
+seed:
+    value: 42
+update_frequency:
+    value: 5
+use_wandb:
+    value: true
