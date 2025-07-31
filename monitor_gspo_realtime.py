@@ -19,13 +19,13 @@ class GSPORealtimeMonitor:
         print(f"🚀 GSPO REAL-TIME MONITOR")
         print("=" * 60)
         
-        # Load model
-        model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-        print(f"📡 Loading model: {model_name}")
+        # Load YOUR trained GSPO model
+        model_path = "./robust_gspo_results/best_model"
+        print(f"📡 Loading YOUR trained GSPO model: {model_path}")
         
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
+            model_path,
             torch_dtype=torch.float32,
             low_cpu_mem_usage=True
         ).to(self.device)
@@ -33,7 +33,7 @@ class GSPORealtimeMonitor:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        # Setup GSPO
+        # Setup GSPO with same config as your training
         config = GSPOConfig(
             learning_rate=1e-7,
             left_clip_range=0.002,
@@ -50,7 +50,7 @@ class GSPORealtimeMonitor:
         self.data = generator.generate_dataset(20, {"easy": 0.8, "medium": 0.2})
         self.reward_function = generator.create_reward_function()
         
-        print(f"✅ Monitor ready! {len(self.data)} problems loaded")
+        print(f"✅ Monitor ready! YOUR trained model loaded with {len(self.data)} problems")
         print("=" * 60)
     
     def demo_response_generation(self):
