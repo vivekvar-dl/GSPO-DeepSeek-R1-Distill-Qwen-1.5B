@@ -13,6 +13,8 @@ __pycache__/
 
 # Model files (too large for GitHub)
 robust_gspo_results/
+custom_gspo_results/
+validation_results/
 *.tar.gz
 *.zip
 
@@ -34,3 +36,6 @@ wandb/cache/
 *.safetensors
 *.pt
 *.pth
+
+# Temporary organization folder
+need to change/
