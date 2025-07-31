@@ -49,6 +49,7 @@ class PPOTrainer:
         self.tokenizer = tokenizer
         self.config = config
         self.device = device
+        self.step = 0  # Initialize step counter first
         
         # Initialize old model for importance ratios
         self.old_model = None
@@ -59,7 +60,6 @@ class PPOTrainer:
             lr=config.learning_rate,
             eps=1e-8
         )
-        self.step = 0
         
         print(f"✅ PPO Trainer initialized")
     
@@ -247,6 +247,7 @@ class GRPOTrainer:
         self.tokenizer = tokenizer
         self.config = config
         self.device = device
+        self.step = 0  # Initialize step counter first
         
         self.old_model = None
         self.update_old_model()
@@ -256,7 +257,6 @@ class GRPOTrainer:
             lr=config.learning_rate,
             eps=1e-8
         )
-        self.step = 0
         
         print(f"✅ GRPO Trainer initialized")
     
