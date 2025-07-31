@@ -19,13 +19,22 @@ class GSPORealtimeMonitor:
         print(f"🚀 GSPO REAL-TIME MONITOR")
         print("=" * 60)
         
-        # Load YOUR trained GSPO model
+        # Try to load YOUR trained GSPO model, fallback to base model
         model_path = "./robust_gspo_results/best_model"
-        print(f"📡 Loading YOUR trained GSPO model: {model_path}")
+        base_model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
         
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        import os
+        if os.path.exists(model_path):
+            print(f"📡 Loading YOUR trained GSPO model: {model_path}")
+            model_to_load = model_path
+        else:
+            print(f"⚠️  Trained model not found at {model_path}")
+            print(f"📡 Loading base model instead: {base_model_name}")
+            model_to_load = base_model_name
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_to_load)
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
+            model_to_load,
             torch_dtype=torch.float32,
             low_cpu_mem_usage=True
         ).to(self.device)
@@ -50,7 +59,8 @@ class GSPORealtimeMonitor:
         self.data = generator.generate_dataset(20, {"easy": 0.8, "medium": 0.2})
         self.reward_function = generator.create_reward_function()
         
-        print(f"✅ Monitor ready! YOUR trained model loaded with {len(self.data)} problems")
+        model_type = "YOUR trained model" if os.path.exists(model_path) else "base model"
+        print(f"✅ Monitor ready! {model_type} loaded with {len(self.data)} problems")
         print("=" * 60)
     
     def demo_response_generation(self):
@@ -117,10 +127,10 @@ class GSPORealtimeMonitor:
         log_ratio = current_log_prob - old_log_prob
         importance_ratio = torch.exp(log_ratio)
         
-        print(f"📈 Current Model Log-Prob: {current_log_prob:.6f}")
-        print(f"📉 Old Model Log-Prob: {old_log_prob:.6f}")
-        print(f"⚖️  Log Ratio: {log_ratio:.6f}")
-        print(f"🎲 Importance Ratio: {importance_ratio:.6f}")
+        print(f"📈 Current Model Log-Prob: {current_log_prob.item():.6f}")
+        print(f"📉 Old Model Log-Prob: {old_log_prob.item():.6f}")
+        print(f"⚖️  Log Ratio: {log_ratio.item():.6f}")
+        print(f"🎲 Importance Ratio: {importance_ratio.item():.6f}")
         
         # Check if it would be clipped
         clipped = importance_ratio < (1 - self.trainer.config.left_clip_range) or \
