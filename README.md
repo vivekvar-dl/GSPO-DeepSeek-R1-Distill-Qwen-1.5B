@@ -234,7 +234,7 @@ If you use this implementation in your research, please cite both the original p
   author={Varikuti Sara Vivek},
   year={2025},
   note={Implementation of Zheng et al. GSPO algorithm},
-  url={https://github.com/vivekvar-dl/gpso}
+  url={https://github.com/vivekvar-dl/GSPO-DeepSeek-R1-Distill-Qwen-1.5B}
 }
 ```
 
