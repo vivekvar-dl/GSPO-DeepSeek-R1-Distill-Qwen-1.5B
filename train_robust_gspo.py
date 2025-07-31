@@ -203,6 +203,8 @@ def main():
                        help="Right clipping range")
     parser.add_argument("--group_size", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--grad_accum_steps", type=int, default=4,
+                       help="Gradient accumulation steps for stability")
     parser.add_argument("--update_frequency", type=int, default=1)
     
     # Training parameters
@@ -273,7 +275,7 @@ def main():
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         max_length=args.max_length,
-        gradient_accumulation_steps=4,  # Increased for stability
+        gradient_accumulation_steps=args.grad_accum_steps,
         use_8bit_optimizer=False,
         use_gradient_checkpointing=True  # Enable for larger datasets
     )
