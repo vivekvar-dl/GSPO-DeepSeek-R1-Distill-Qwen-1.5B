@@ -101,9 +101,12 @@ model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-R1-Distill-Qw
 # Initialize trainer
 trainer = GSPOTrainer(model, tokenizer, config)
 
-# Load dataset
+# Load dataset (standard reasoning)
 dataset = GSPOCustomDataset()
 train_data = dataset.generate_dataset(500)
+
+# Load medical dataset
+medical_data = dataset.generate_dataset(500, include_medical=True)
 
 # Training loop
 for epoch in range(config.num_epochs):
@@ -186,6 +189,32 @@ python experiments/run_baseline_comparison.py \
 python experiments/run_benchmarks.py \
     --model_path "./gspo_results/best_model" \
     --benchmarks "zebralogic,math,custom"
+```
+
+### Medical Domain Training
+Train the model on medical QA tasks (clinical vignettes and MCQs):
+```bash
+python experiments/train_gspo.py \
+    --model_name "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" \
+    --dataset medical \
+    --num_epochs 8 \
+    --batch_size 2 \
+    --learning_rate 1e-7 \
+    --output_dir "./gspo_medical_results"
+```
+
+You can also combine medical questions with other domains:
+```python
+from gspo.data_loader import DatasetLoader
+
+loader = DatasetLoader()
+mixed_data = loader.create_mixed_dataset(
+    math_ratio=0.2,
+    code_ratio=0.2,
+    reasoning_ratio=0.2,
+    medical_ratio=0.4,
+    total_samples=200
+)
 ```
 
 ## Training Configuration

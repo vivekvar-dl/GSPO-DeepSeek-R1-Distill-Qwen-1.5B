@@ -232,14 +232,127 @@ class GSPOCustomDataset:
             "target_answer": str(final if 'final' in locals() else result)
         }
     
-    def generate_dataset(self, num_samples=100, difficulty_mix=None):
-        """Generate a balanced custom dataset"""
+    def generate_medical_vignette(self, difficulty="easy"):
+        """Generate a medical clinical vignette / question.
+
+        Questions are drawn from a fixed bank and rotated randomly so that
+        different ``random.seed`` values produce varied ordering.
+        """
+        bank = {
+            "easy": [
+                {
+                    "query": "A 5-year-old child presents with a barking cough, inspiratory stridor, and low-grade fever. What is the most likely diagnosis?",
+                    "reference_answer": "Croup (laryngotracheobronchitis). The characteristic barking cough and inspiratory stridor in a young child with low-grade fever are classic features of viral croup, most commonly caused by parainfluenza virus.",
+                    "target_answer": "Croup",
+                },
+                {
+                    "query": "A patient presents with chest pain that worsens when lying flat and improves when leaning forward. What is the most likely diagnosis?",
+                    "reference_answer": "Pericarditis. The positional nature of the chest pain (worse supine, relieved by leaning forward) is the hallmark of pericarditis.",
+                    "target_answer": "Pericarditis",
+                },
+                {
+                    "query": "A 70-year-old woman with a history of osteoporosis slips and falls. X-ray shows a fracture at the femoral neck. What type of fracture is this?",
+                    "reference_answer": "Hip fracture (femoral neck fracture). Osteoporosis weakens bone density, making the femoral neck susceptible to fracture even with low-energy trauma.",
+                    "target_answer": "Hip fracture",
+                },
+                {
+                    "query": "A newborn develops jaundice within the first 24 hours of life. What is the most concerning cause?",
+                    "reference_answer": "Hemolytic disease of the newborn (HDN) / Rh incompatibility. Jaundice appearing within the first 24 hours is always pathological and most commonly caused by hemolysis from blood group incompatibility.",
+                    "target_answer": "Hemolytic disease of the newborn",
+                },
+                {
+                    "query": "A patient is prescribed amoxicillin and develops a diffuse maculopapular rash. They are subsequently found to have infectious mononucleosis. Why did the rash occur?",
+                    "reference_answer": "Aminopenicillin rash in EBV infection. Nearly 80-100% of patients with Epstein-Barr virus (EBV) infectious mononucleosis develop a rash when given ampicillin or amoxicillin, due to an immune-mediated reaction rather than true penicillin allergy.",
+                    "target_answer": "Aminopenicillin rash in EBV infection",
+                },
+            ],
+            "medium": [
+                {
+                    "query": "A 55-year-old man with a 30 pack-year smoking history presents with progressive dyspnea, barrel chest, and decreased breath sounds bilaterally. Spirometry shows FEV1/FVC < 0.7. What is the diagnosis and the underlying pathophysiology?",
+                    "reference_answer": "Chronic Obstructive Pulmonary Disease (COPD) - Emphysema. Smoking destroys alveolar walls via neutrophil elastase, leading to loss of elastic recoil, air trapping, barrel chest, and obstructive pattern on spirometry (reduced FEV1/FVC).",
+                    "target_answer": "COPD / Emphysema",
+                },
+                {
+                    "query": "A 28-year-old woman presents with a butterfly-shaped facial rash, joint pain, fatigue, and photosensitivity. Lab work shows ANA positive, anti-dsDNA positive, and low complement levels. What is the diagnosis?",
+                    "reference_answer": "Systemic Lupus Erythematosus (SLE). The malar (butterfly) rash, polyarthritis, photosensitivity, positive ANA and anti-dsDNA antibodies, and hypocomplementemia fulfil multiple SLE diagnostic criteria (SLICC/ACR criteria).",
+                    "target_answer": "Systemic Lupus Erythematosus (SLE)",
+                },
+                {
+                    "query": "A 40-year-old alcoholic presents with confusion, ataxia, and ophthalmoplegia. What is the diagnosis and immediate treatment?",
+                    "reference_answer": "Wernicke's Encephalopathy (thiamine/B1 deficiency). The classic triad is confusion, ataxia, and ophthalmoplegia. Immediate treatment is IV thiamine (100 mg) before any glucose administration to prevent progression to Korsakoff psychosis.",
+                    "target_answer": "Wernicke's Encephalopathy",
+                },
+                {
+                    "query": "A diabetic patient develops painless loss of vision in one eye described as a 'curtain coming down'. Fundoscopy shows neovascularization. What complication has occurred?",
+                    "reference_answer": "Proliferative Diabetic Retinopathy with traction retinal detachment. Chronic hyperglycemia causes retinal ischemia, which stimulates VEGF-driven neovascularization. New fragile vessels bleed and cause fibrous traction bands that detach the retina.",
+                    "target_answer": "Proliferative diabetic retinopathy / retinal detachment",
+                },
+                {
+                    "query": "A patient with rheumatoid arthritis is started on methotrexate. Which supplement must be co-prescribed and why?",
+                    "reference_answer": "Folic acid (folate). Methotrexate inhibits dihydrofolate reductase, depleting folate stores and causing mucositis, bone marrow suppression, and hepatotoxicity. Supplementing folic acid reduces these side effects without significantly reducing the anti-inflammatory efficacy.",
+                    "target_answer": "Folic acid",
+                },
+            ],
+            "hard": [
+                {
+                    "query": "A 35-year-old woman presents with episodic hypertension, palpitations, diaphoresis, and headache. 24-hour urine shows elevated metanephrines. Imaging reveals a 4 cm adrenal mass. What is the diagnosis, and what pre-operative medication must be started first and why?",
+                    "reference_answer": "Pheochromocytoma. Pre-operative management requires alpha-blockade (e.g., phenoxybenzamine) FIRST to control hypertension and prevent hypertensive crisis during surgery, followed by beta-blockade only AFTER alpha-blockade is established. Giving beta-blockers first causes unopposed alpha-adrenergic stimulation, precipitating severe hypertension.",
+                    "target_answer": "Pheochromocytoma; alpha-blockade first",
+                },
+                {
+                    "query": "A neonate born to a mother with poorly controlled type 1 diabetes presents with jitteriness, poor feeding, and seizures 2 hours after birth. Glucose is 1.5 mmol/L. Explain the pathophysiology.",
+                    "reference_answer": "Neonatal hypoglycemia due to hyperinsulinism. Maternal hyperglycemia crosses the placenta, stimulating fetal pancreatic beta cells to hypertrophy and produce excess insulin. At birth, the maternal glucose supply stops abruptly, but fetal hyperinsulinism persists, causing hypoglycemia.",
+                    "target_answer": "Neonatal hypoglycemia due to fetal hyperinsulinism",
+                },
+                {
+                    "query": "A patient on long-term heparin therapy develops a sudden drop in platelet count from 280 to 60 × 10⁹/L on day 8 of treatment, along with a new venous thrombosis. What is the diagnosis and mechanism?",
+                    "reference_answer": "Heparin-Induced Thrombocytopenia type II (HIT). Heparin binds platelet factor 4 (PF4) forming a complex that stimulates antibody (IgG) production. These antibodies activate platelets via FcγRIIa receptors, causing platelet consumption (thrombocytopenia) and paradoxical thrombosis. Heparin must be stopped immediately and a non-heparin anticoagulant started.",
+                    "target_answer": "Heparin-Induced Thrombocytopenia (HIT)",
+                },
+                {
+                    "query": "A 6-month-old boy presents with recurrent bacterial and fungal infections, absence of tonsils, undetectable immunoglobulins, and absent B cells but normal T cell counts. What is the most likely diagnosis and the genetic defect?",
+                    "reference_answer": "X-linked Agammaglobulinemia (XLA / Bruton's agammaglobulinemia). It is caused by a mutation in the BTK (Bruton's tyrosine kinase) gene on the X chromosome, which is essential for B-cell maturation from pre-B to mature B cells. The result is absent mature B cells, absent immunoglobulins, and absent tonsils/lymphoid tissue.",
+                    "target_answer": "X-linked Agammaglobulinemia (XLA); BTK mutation",
+                },
+                {
+                    "query": "A patient with small cell lung cancer develops hyponatremia (Na+ 118 mmol/L), concentrated urine (urine osmolality > serum osmolality), and clinically euvolemic status. What syndrome is this and what is the mechanism?",
+                    "reference_answer": "Syndrome of Inappropriate ADH secretion (SIADH). Small cell lung cancer ectopically produces ADH (arginine vasopressin), causing excessive water retention in the collecting duct, dilutional hyponatremia, and inappropriately concentrated urine despite low serum osmolality.",
+                    "target_answer": "SIADH",
+                },
+            ],
+        }
+
+        questions = bank.get(difficulty, bank["easy"])
+        problem = random.choice(questions)
+
+        return {
+            "query": problem["query"],
+            "reference_answer": problem["reference_answer"],
+            "type": "medical",
+            "difficulty": difficulty,
+            "target_answer": problem["target_answer"],
+        }
+
+    def generate_dataset(self, num_samples=100, difficulty_mix=None, include_medical=False):
+        """Generate a balanced custom dataset.
+
+        Parameters
+        ----------
+        num_samples : int
+            Total number of samples to generate.
+        difficulty_mix : dict, optional
+            Proportion of each difficulty level.
+        include_medical : bool
+            When True, medical clinical vignettes are added to the problem type pool.
+        """
         
         if difficulty_mix is None:
             difficulty_mix = {"easy": 0.5, "medium": 0.3, "hard": 0.2}
         
         dataset = []
         problem_types = ["arithmetic_chain", "pattern_completion", "logical_reasoning", "word_problems"]
+        if include_medical:
+            problem_types.append("medical")
         
         for i in range(num_samples):
             # Choose problem type
@@ -261,6 +374,8 @@ class GSPOCustomDataset:
                 problem = self.generate_pattern_completion(difficulty)
             elif problem_type == "logical_reasoning":
                 problem = self.generate_logical_reasoning(difficulty)
+            elif problem_type == "medical":
+                problem = self.generate_medical_vignette(difficulty)
             else:  # word_problems
                 problem = self.generate_word_problems(difficulty)
             
