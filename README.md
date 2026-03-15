@@ -1,6 +1,13 @@
 # Group Sequence Policy Optimization (GSPO) Implementation
 
-This repository provides an open-source implementation of the Group Sequence Policy Optimization algorithm introduced by Zheng et al. (Qwen Team, Alibaba Inc.) in their paper "Group Sequence Policy Optimization". The implementation is optimized for NVIDIA H100 GPUs and includes comprehensive baseline comparisons with PPO and GRPO algorithms.
+[![Stars](https://img.shields.io/github/stars/vivekvar-dl/GSPO-DeepSeek-R1-Distill-Qwen-1.5B?style=for-the-badge)](https://github.com/vivekvar-dl/GSPO-DeepSeek-R1-Distill-Qwen-1.5B/stargazers)
+[![Forks](https://img.shields.io/github/forks/vivekvar-dl/GSPO-DeepSeek-R1-Distill-Qwen-1.5B?style=for-the-badge)](https://github.com/vivekvar-dl/GSPO-DeepSeek-R1-Distill-Qwen-1.5B/network/members)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue?style=for-the-badge&logo=python)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-EE4C2C?style=for-the-badge&logo=pytorch)](https://pytorch.org/)
+[![HuggingFace](https://img.shields.io/badge/%F0%9F%A4%97%20Model-vivekvar/GSPO--DeepSeek--R1--Distill--Qwen--1.5B-yellow?style=for-the-badge)](https://huggingface.co/vivekvar/GSPO-DeepSeek-R1-Distill-Qwen-1.5B)
+
+**Open-source implementation of the GSPO algorithm by Zheng et al. (Qwen Team, Alibaba Inc.)** — optimized for NVIDIA H100 GPUs with comprehensive baseline comparisons (PPO, GRPO). Distills reasoning capabilities into smaller, deployable models.
 
 ## Paper Reference
 
@@ -259,8 +266,14 @@ We thank the Qwen Team at Alibaba Inc. for developing the original GSPO algorith
 ## Support
 
 For questions about the implementation:
-- Open an issue on GitHub
-- Check the documentation in the `docs/` directory
-- Review the training logs on [Wandb](https://wandb.ai/domainluther1234-usha-rama-college-of-engineering-and-te/gspo-robust-training/runs/pmyrt2ul/overview)
+- **Issues:** [GitHub Issues](https://github.com/vivekvar-dl/GSPO-DeepSeek-R1-Distill-Qwen-1.5B/issues)
+- **Docs:** Check the `docs/` directory
+- **Training Logs:** [Wandb Run](https://wandb.ai/domainluther1234-usha-rama-college-of-engineering-and-te/gspo-robust-training/runs/pmyrt2ul/overview)
 
-For questions about the original algorithm, please refer to the paper by Zheng et al. and the Qwen Team at Alibaba Inc. 
+For questions about the original algorithm, please refer to the paper by Zheng et al. and the Qwen Team at Alibaba Inc.
+
+---
+
+**⭐ Star this repo if you find it useful!**
+
+**Built by [Vivek Varikuti](https://vivekvari.dev)** 
