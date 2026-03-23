@@ -207,7 +207,7 @@ def main():
     
     # Dataset parameters
     parser.add_argument("--dataset", type=str, default="mixed",
-                       choices=["mixed", "math", "code", "gsm8k"],
+                       choices=["mixed", "math", "code", "gsm8k", "medical"],
                        help="Dataset to use for training")
     parser.add_argument("--num_train_samples", type=int, default=100,
                        help="Number of training samples")
@@ -276,6 +276,16 @@ def main():
     elif args.dataset == "gsm8k":
         train_data = loader.load_gsm8k("train", args.num_train_samples)
         eval_data = loader.load_gsm8k("test", args.num_eval_samples)
+    elif args.dataset == "medical":
+        easy_n = args.num_train_samples // 3
+        medium_n = args.num_train_samples // 3
+        hard_n = args.num_train_samples - easy_n - medium_n
+        train_data = (loader.load_medical_qa("easy", easy_n) +
+                     loader.load_medical_qa("medium", medium_n) +
+                     loader.load_medical_qa("hard", hard_n))
+        eval_easy_n = args.num_eval_samples // 2
+        eval_data = (loader.load_medical_qa("easy", eval_easy_n) +
+                    loader.load_medical_qa("medium", args.num_eval_samples - eval_easy_n))
     
     print(f"Loaded {len(train_data)} training samples")
     print(f"Loaded {len(eval_data)} evaluation samples")
